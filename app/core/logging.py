@@ -1,4 +1,4 @@
-# sentiric-knowledge-query-service/app/core/logging.py
+# sentiric-knowledge-indexing-service/app/core/logging.py
 import logging
 import sys
 import structlog
@@ -43,5 +43,5 @@ def setup_logging():
     )
     _log_setup_done = True
     
-    logger = structlog.get_logger("sentiric_knowledge_query_service")
+    logger = structlog.get_logger("sentiric_knowledge_indexing_service")
     logger.info("Loglama başarıyla yapılandırıldı.", env=env, log_level=log_level)

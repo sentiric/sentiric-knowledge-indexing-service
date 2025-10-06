@@ -1,34 +1,36 @@
-# 📚 Sentiric Knowledge Query Service - Mantık ve Akış Mimarisi
+# ✍️ Sentiric Knowledge Indexing Service - Mantık ve Akış Mimarisi
 
-**Stratejik Rol:** RAG (Retrieval Augmented Generation) mimarisinin "Okuma" (Query) bacağını temsil eder. Gelen doğal dil sorgularını alır, bunları vektörleştirir ve en alakalı kurumsal bilgiyi (Context) Vector Database'ten çeker.
+**Stratejik Rol:** RAG mimarisinin "Yazma" (Indexing) bacağını temsil eder. Harici veri kaynaklarından (PostgreSQL, Web Siteleri, Dosyalar) gelen yapılandırılmış veya yapılandırılmamış veriyi işler, parçalar (chunking), vektörleştirir ve Vector Database'e (Qdrant) yazar.
 
 ---
 
-## 1. CQRS Mimarisi ve Okuma Akışı
+## 1. CQRS Mimarisi ve Yazma Akışı
 
-Bu servis sadece **Okuma (Query)** işlemlerinden sorumludur. Yazma (Indexing) işlemleri ayrı bir servistedir.
+Bu servis, olay tabanlı veya periyodik olarak çalışır.
 
 ```mermaid
 sequenceDiagram
-    participant Agent as Agent/LLM Gateway
-    participant QueryService as Knowledge Query Service
+    participant Source as Veri Kaynağı (Postgres, Web)
+    participant Worker as Indexing Worker
     participant Embedding as Embedding Model
     participant Qdrant as Vector DB
     
-    Agent->>QueryService: Query(user_question, tenant_id, top_k)
+    Note over Worker: 1. Tetikleme (Periyodik veya Event)
+    Worker->>Source: FetchData(tenant_id, source_uri)
+    Source-->>Worker: Ham Veri (Text/HTML)
     
-    Note over QueryService: 1. Sorgu Vektörleştirme
-    QueryService->>Embedding: Embed(user_question)
-    Embedding-->>QueryService: Query Vector (768D)
+    Note over Worker: 2. Chunking & Temizleme
+    Worker->>Embedding: Embed(chunk_of_text)
+    Embedding-->>Worker: Vector
     
-    Note over QueryService: 2. Vektör Sorgulama
-    QueryService->>Qdrant: Search(query_vector, collection=tenant_id)
-    Qdrant-->>QueryService: Top K Sonuç (Score + Payload)
+    Note over Worker: 3. Vector DB Yazma
+    Worker->>Qdrant: UpsertPoints(collection=tenant_id, vector, payload)
+    Qdrant-->>Worker: OK
     
-    Note over QueryService: 3. Sonuçları Geri Dönüş Formatına Çevir
-    QueryService-->>Agent: QueryResponse(results: [...])
+    Worker->>Worker: Mark source as indexed
 ```
 
-## 2. Optimizasyon
-* Caching: Sık sorulan soruların (Q/A çiftleri) sonucunu Redis'te önbelleğe almak kritik performans kazancı sağlar.
-* Agnostik DB: Sadece Qdrant Client'ını kullanır, böylece alt katman (Vector DB) değişse bile RPC kontratı aynı kalır.
+## 2. Ana İşleyiciler (Ingesters)
+*Indexing Service, farklı veri kaynaklarını işlemek için modüler ingester'lar kullanır:
+* postgres_ingester.py: PostgreSQL tablolarını okur.
+* web_ingester.py: URL'leri (örneğin kurumsal FAQ sayfaları) okur ve ayrıştırır.

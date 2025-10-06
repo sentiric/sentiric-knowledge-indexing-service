@@ -1,11 +1,14 @@
 # --- STAGE 1: Builder ---
 FROM python:3.11-slim-bullseye AS builder
 
-# Gerekli sistem bağımlılıkları (sentence-transformers için)
+# Gerekli sistem bağımlılıkları (sentence-transformers ve asyncpg için)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     build-essential \
+    libpq-dev \
     libgomp1 \
+    cmake \
+    libopenblas-dev \
     git && \
     rm -rf /var/lib/apt/lists/*
 
@@ -32,11 +35,12 @@ FROM python:3.11-slim-bullseye
 
 WORKDIR /app
 
-# Gerekli sistem bağımlılıkları
+# Gerekli sistem bağımlılıkları (libpq-dev ve libgomp1 runtime için)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     netcat-openbsd \
     curl \
     ca-certificates \
+    libpq5 \
     libgomp1 && \
     rm -rf /var/lib/apt/lists/*
 
@@ -60,5 +64,7 @@ ENV SERVICE_VERSION=${SERVICE_VERSION}
 
 USER appuser
 
-# Başlangıç komutu: Query Servisi HTTP/gRPC'de 12041'de dinleyecektir (Harmony Port)
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "12041"]
+# Başlangıç komutu: Bu servis arka plan işlerini yapar, API portu isteğe bağlıdır. 
+# Genellikle API/gRPC portu 12040 (Knowledge Query) tarafından kullanılır. Bu servis 
+# çoğunlukla arkaplan worker olarak çalışacaktır, bu yüzden `main.py` dosyasını kullanıyoruz.
+CMD ["python", "app/main.py"]

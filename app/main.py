@@ -1,47 +1,35 @@
-# sentiric-knowledge-query-service/app/main.py
-from fastapi import FastAPI, status
-from contextlib import asynccontextmanager
+# sentiric-knowledge-indexing-service/app/main.py
+import asyncio
 from app.core.logging import setup_logging
 from app.core.config import settings
+from app.workers.indexing_worker import start_worker_loop
 import structlog
-# from qdrant_client import QdrantClient # İleride eklenecek
+import os
 
 logger = structlog.get_logger(__name__)
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+# Bu servis genellikle bir arkaplan işleyicisi (worker) olarak çalışır.
+# API arayüzü, sadece TriggerReindex RPC'si için gereklidir.
+
+def main():
     setup_logging()
-    logger.info("Knowledge Query Service başlatılıyor", 
+    
+    logger.info("Knowledge Indexing Service başlatılıyor (Worker Modu)", 
                 version=settings.SERVICE_VERSION, 
-                env=settings.ENV,
-                qdrant_url=settings.QDRANT_URL)
+                env=settings.ENV)
     
-    # TODO: Qdrant Client ve Embedding Model'i başlat
-    # global QDRANT_CLIENT, EMBEDDING_MODEL
+    # TriggerReindex RPC'sini dinlemek için Uvicorn/FastAPI veya sadece 
+    # sürekli çalışan bir worker loop'u başlatılabilir.
     
-    yield
-    
-    logger.info("Knowledge Query Service kapatılıyor")
+    if os.environ.get("RUN_MODE") == "API":
+        # API Modu (RPC dinleme)
+        logger.info("API modu başlatılıyor...")
+        # from fastapi_app import app 
+        # uvicorn.run(app, host="0.0.0.0", port=settings.HTTP_PORT)
+    else:
+        # Worker Modu (Sürekli Veri İşleme)
+        logger.info("Worker modu başlatılıyor, sürekli indeksleme döngüsü bekleniyor...")
+        asyncio.run(start_worker_loop())
 
-app = FastAPI(
-    title="Sentiric Knowledge Query Service",
-    description="RAG sorgu motoru (Okuma bacağı)",
-    version=settings.SERVICE_VERSION,
-    lifespan=lifespan
-)
-
-@app.get("/health", status_code=status.HTTP_200_OK)
-async def health_check():
-    # TODO: Qdrant'a basit bir ping atarak health check'i gerçekle
-    # if QDRANT_CLIENT.get_health_status().ok():
-    #     return {"status": "ok", "service": "knowledge-query"}
-    
-    return {"status": "ok", "service": "knowledge-query"}
-
-# RPC'ler burada tanımlanacak (Query RPC'si)
-# @app.post(settings.API_V1_STR + "/query")
-# async def run_query(request: QueryRequest):
-#    # 1. Query metnini vektörleştir
-#    # 2. Qdrant'ta sorgula
-#    # 3. Sonuçları döndür
-#    pass
+if __name__ == "__main__':
+    main()
