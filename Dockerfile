@@ -67,4 +67,4 @@ USER appuser
 # Başlangıç komutu: Bu servis arka plan işlerini yapar, API portu isteğe bağlıdır. 
 # Genellikle API/gRPC portu 12040 (Knowledge Query) tarafından kullanılır. Bu servis 
 # çoğunlukla arkaplan worker olarak çalışacaktır, bu yüzden `main.py` dosyasını kullanıyoruz.
-CMD ["python", "app/main.py"]
+CMD ["python", "-m", "app.main"]
