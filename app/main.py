@@ -31,5 +31,5 @@ def main():
         logger.info("Worker modu başlatılıyor, sürekli indeksleme döngüsü bekleniyor...")
         asyncio.run(start_worker_loop())
 
-if __name__ == "__main__':
+if __name__ == "__main__":
     main()
