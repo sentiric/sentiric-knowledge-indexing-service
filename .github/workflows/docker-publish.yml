@@ -1,9 +1,13 @@
-### 📄 File: [ilgili-servis]/.github/workflows/docker-publish.yml (STANDART ve GÜNCELLENMİŞ)
+# =================================================================
+#    SENTIRIC PLATFORM - DUAL CPU/GPU DOCKER PUBLISH (v4.0 Final)
+# =================================================================
+# Bu workflow, hem hafif bir CPU imajı hem de tam donanımlı bir GPU
+# imajı oluşturur ve bunları doğru etiketlerle GHCR'ye yayınlar.
+# - `:latest` etiketi, varsayılan olarak CPU imajını işaret eder.
+# - `:gpu` etiketi, CUDA destekli imajı işaret eder.
+# =================================================================
 
-# =================================================================
-#    SENTIRIC PLATFORM - PYTHON CI/CD DOCKER YAYINLAMA v4.0 (Cache-Optimized)
-# =================================================================
-name: Docker Image CI
+name: Docker Image CI (CPU & GPU)
 
 on:
   push:
@@ -11,14 +15,18 @@ on:
   workflow_dispatch:
 
 jobs:
-  build_and_push:
+  # =================================
+  #      İŞ 1: CPU İMAJI (Varsayılan)
+  # =================================
+  build_and_push_cpu:
+    name: Build and Push (CPU)
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
 
     steps:
-      - name: Check out the repo with submodules
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: 'recursive'
@@ -34,29 +42,77 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Prepare Dynamic Build Arguments
+      - name: Prepare Build Metadata
         id: prep
         run: |
+          # `${{ github.repository }}` değişkeni zaten 'owner/repo-name' formatındadır, örn: 'sentiric/sentiric-knowledge-query-service'
+          echo "SERVICE_NAME=${{ github.repository }}" >> $GITHUB_ENV
           echo "BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
           echo "GIT_COMMIT=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
-          SERVICE_VERSION=$(grep '^version =' pyproject.toml | awk -F '\"' '{print $2}')
-          echo "SERVICE_VERSION=$SERVICE_VERSION" >> $GITHUB_ENV
-          # Depo adını küçük harfe çevirerek standartlaştırıyoruz.
-          echo "REPO_NAME_LOWER=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+          echo "SERVICE_VERSION=$(grep '^version =' pyproject.toml | awk -F '\"' '{print $2}' || echo '0.0.0')" >> $GITHUB_ENV
 
-      - name: Build and push Docker image with Cache
+      - name: Build and push CPU Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ env.REPO_NAME_LOWER }}:latest
-            ghcr.io/${{ env.REPO_NAME_LOWER }}:${{ env.SERVICE_VERSION }}-${{ env.GIT_COMMIT }}
+            ghcr.io/${{ env.SERVICE_NAME }}:latest
+            ghcr.io/${{ env.SERVICE_NAME }}:${{ env.SERVICE_VERSION }}-${{ env.GIT_COMMIT }}
+            ghcr.io/${{ env.SERVICE_NAME }}:cpu
+            ghcr.io/${{ env.SERVICE_NAME }}:${{ env.SERVICE_VERSION }}-cpu
+          build-args: |
+            SERVICE_VERSION=${{ env.SERVICE_VERSION }}
+            GIT_COMMIT=${{ env.GIT_COMMIT }}
+            BUILD_DATE=${{ env.BUILD_DATE }}            
+            TORCH_INDEX_URL=--extra-index-url https://download.pytorch.org/whl/cpu
+
+  # =================================
+  #        İŞ 2: GPU İMAJI
+  # =================================
+  build_and_push_gpu:
+    name: Build and Push (GPU)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare Build Metadata
+        id: prep
+        run: |
+          # `${{ github.repository }}` değişkeni zaten 'owner/repo-name' formatındadır.
+          echo "SERVICE_NAME=${{ github.repository }}" >> $GITHUB_ENV
+          echo "BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
+          echo "GIT_COMMIT=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          echo "SERVICE_VERSION=$(grep '^version =' pyproject.toml | awk -F '\"' '{print $2}' || echo '0.0.0')" >> $GITHUB_ENV
+
+      - name: Build and push GPU Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ env.SERVICE_NAME }}:gpu
+            ghcr.io/${{ env.SERVICE_NAME }}:${{ env.SERVICE_VERSION }}-gpu
           build-args: |
             SERVICE_VERSION=${{ env.SERVICE_VERSION }}
             GIT_COMMIT=${{ env.GIT_COMMIT }}
             BUILD_DATE=${{ env.BUILD_DATE }}
-          # --- KRİTİK DEĞİŞİKLİK: Akıllı Cache Kullanımı ---
-          # 'no-cache: true' satırını kaldırıp yerine bunu ekliyoruz.
-          cache-from: type=gha,scope=${{ github.ref }}
-          cache-to: type=gha,scope=${{ github.ref }},mode=max
+            TORCH_INDEX_URL=
