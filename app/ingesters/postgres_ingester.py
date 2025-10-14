@@ -18,7 +18,7 @@ async def fetch_data_from_postgres(tenant_id: str, table_name: str) -> list[Docu
     (Placeholder implementasyonu)
     """
     
-    if not settings.DATABASE_URL:
+    if not settings.POSTGRES_URL:
         logger.warning("Veritabanı URL'si tanımlı değil, mock veri döndürülüyor.")
         return [
             DocumentChunk(

@@ -20,8 +20,8 @@ async def start_worker_loop():
     # Placeholder: Qdrant ve Embedding Model'ini yükle
     try:
         # NOTE: Model yükleme çok uzun sürebilir. Dockerfile'da cachelenmelidir.
-        model = SentenceTransformer(settings.EMBEDDING_MODEL_NAME)
-        qdrant_client = QdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY)
+        model = SentenceTransformer(settings.QDRANT_DB_EMBEDDING_MODEL_NAME)
+        qdrant_client = QdrantClient(url=settings.QDRANT_HTTP_URL, api_key=settings.QDRANT_API_KEY)
         logger.info("Vector DB ve Embedding Model'i hazır.")
     except Exception as e:
         logger.error("Vektörleştirme altyapısı başlatılamadı.", error=str(e))
@@ -43,7 +43,7 @@ async def start_worker_loop():
             # vectors = model.encode([item.content for item in postgres_data])
 
             # Placeholder: Qdrant'a Collection oluşturma (CQRS gereği bu işlem Knowledge-Query'de yapılmaz)
-            collection_name = f"{settings.QDRANT_COLLECTION_PREFIX}mock_tenant"
+            collection_name = f"{settings.QDRANT_DB_COLLECTION_PREFIX}mock_tenant"
             
             # NOTE: Gerçekte QdrantClient.recreate_collection kullanılır.
             qdrant_client.recreate_collection(
@@ -53,4 +53,4 @@ async def start_worker_loop():
             
             logger.info("Indeksleme işlemi tamamlandı.", collection=collection_name)
         
-        await asyncio.sleep(settings.INDEXING_INTERVAL_SECONDS) # 1 saat bekle
+        await asyncio.sleep(settings.KNOWLEDGE_INDEXING_INTERVAL_SECONDS) # 1 saat bekle
