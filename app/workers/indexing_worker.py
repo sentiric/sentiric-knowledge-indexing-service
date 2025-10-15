@@ -6,11 +6,11 @@ from app.ingesters.postgres_ingester import fetch_data_from_postgres
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams
 from sentence_transformers import SentenceTransformer
-from app.core.health import health_state # <-- YENİ IMPORT
 
 logger = structlog.get_logger(__name__)
 
-async def start_worker_loop():
+# Fonksiyon artık ana uygulamadan bir 'app_state' nesnesi alıyor.
+async def start_worker_loop(app_state):
     logger.info("Indeksleme Worker'ı başlatılıyor.")
     
     model = None
@@ -18,32 +18,29 @@ async def start_worker_loop():
 
     try:
         model = SentenceTransformer(settings.QDRANT_DB_EMBEDDING_MODEL_NAME)
-        health_state.set_model_ready(True) # <-- DURUM GÜNCELLEMESİ
-        
         qdrant_client = QdrantClient(url=settings.QDRANT_HTTP_URL, api_key=settings.QDRANT_API_KEY)
         # Qdrant'a basit bir ping atarak bağlantıyı doğrulayabiliriz.
         qdrant_client.get_collections() 
-        health_state.set_qdrant_ready(True) # <-- DURUM GÜNCELLEMESİ
         
         logger.info("Vector DB ve Embedding Model'i hazır.")
+        app_state.is_ready = True # Her şey hazırsa, sağlık durumunu 'healthy' olarak işaretle.
+        
     except Exception as e:
         logger.critical("Vektörleştirme altyapısı başlatılamadı, worker durduruluyor.", error=str(e), exc_info=True)
-        # Başlatma başarısız olursa sağlık durumunu false yap ve çık
-        health_state.set_model_ready(False)
-        health_state.set_qdrant_ready(False)
+        app_state.is_ready = False # Başlatma başarısız olursa durumu 'unhealthy' yap.
         return
 
     while True:
         try:
-            health_state.set_loop_running(True) # <-- DURUM GÜNCELLEMESİ
             logger.info("Periyodik indeksleme döngüsü başlatıldı.")
             
-            # ... (mevcut döngü kodunuzun geri kalanı aynı kalır) ...
-            
-            tenants_to_index = ["mock_tenant"]
+            # --- Gerçek İndeksleme Mantığı ---
+            # TODO: Bu bölümü gerçek tenant ve veri kaynağı listeleme mantığı ile doldurun.
+            tenants_to_index = ["mock_tenant"] 
             for tenant_id in tenants_to_index:
-                # ... (mevcut kod) ...
-                pass
+                logger.info(f"Tenant işleniyor: {tenant_id}")
+                # documents = await get_documents_for_tenant(tenant_id)
+                # ... (vektörleştirme ve Qdrant'a yazma) ...
             
             logger.info("İndeksleme işlemi tamamlandı.")
 
