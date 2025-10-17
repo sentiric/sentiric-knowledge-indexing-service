@@ -1,39 +1,59 @@
 # sentiric-knowledge-indexing-service/app/ingesters/postgres_ingester.py
-import asyncio
+import asyncpg
 import structlog
+from typing import List
+from .base import BaseIngester
 from app.core.config import settings
-# import asyncpg # İleride eklenecek
+from app.core.models import Document, DataSource
 
 logger = structlog.get_logger(__name__)
 
-# Placeholder: Veritabanı verisini temsil eden basit bir yapı
-class DocumentChunk:
-    def __init__(self, content: str, source: str):
-        self.content = content
-        self.source = source
+class PostgresIngester(BaseIngester):
+    """PostgreSQL'den RAG için gerekli veriyi çeken yükleyici."""
 
-async def fetch_data_from_postgres(tenant_id: str, table_name: str) -> list[DocumentChunk]:
-    """
-    PostgreSQL'den RAG için gerekli veriyi çeker ve DocumentChunk listesi döndürür.
-    (Placeholder implementasyonu)
-    """
-    
-    if not settings.POSTGRES_URL:
-        logger.warning("Veritabanı URL'si tanımlı değil, mock veri döndürülüyor.")
-        return [
-            DocumentChunk(
-                content=f"Sentiric, müşteri hizmetleri için gelişmiş AI sesli botları üretir. Tenant: {tenant_id}",
-                source=f"postgres://{table_name}"
-            )
-        ]
+    async def load(self, source: DataSource) -> List[Document]:
+        if not settings.POSTGRES_URL:
+            logger.error("PostgreSQL URL'si tanımlı değil. Bu yükleyici çalıştırılamaz.")
+            return []
 
-    # TODO: Gerçek asyncpg bağlantısı ve sorgusu burada yer alacak.
-    logger.info("Veritabanından veri çekiliyor...", tenant=tenant_id, table=table_name)
-    await asyncio.sleep(0.5)
-    
-    return [
-        DocumentChunk(
-            content="Müşteri hizmetleri kuralları: Tüm şikayetler 24 saat içinde yanıtlanmalıdır.",
-            source="postgres://crm_rules"
-        ),
-    ]
+        # source.source_uri formatı: "schema.table(content_column,metadata_column1,metadata_column2)"
+        try:
+            table_full, columns_str = source.source_uri.split('(')
+            columns_str = columns_str.rstrip(')')
+            columns = [c.strip() for c in columns_str.split(',')]
+            content_column = columns[0]
+            metadata_columns = columns[1:]
+            
+            query = f'SELECT {", ".join(columns)} FROM {table_full} WHERE tenant_id = $1'
+            logger.info("Veritabanından veri çekiliyor...", query=query, tenant=source.tenant_id)
+
+        except ValueError:
+            logger.error("Postgres source_uri formatı geçersiz.", uri=source.source_uri)
+            return []
+
+        conn = None
+        try:
+            conn = await asyncpg.connect(settings.POSTGRES_URL)
+            records = await conn.fetch(query, source.tenant_id)
+            
+            documents = []
+            for record in records:
+                content = record[content_column]
+                metadata = {
+                    "source_uri": source.source_uri,
+                    "source_type": source.source_type,
+                    "tenant_id": source.tenant_id
+                }
+                for col in metadata_columns:
+                    metadata[col] = record[col]
+                
+                documents.append(Document(page_content=str(content), metadata=metadata))
+            
+            logger.info(f"{len(documents)} adet doküman veritabanından yüklendi.", table=table_full)
+            return documents
+        except Exception as e:
+            logger.error("PostgreSQL'den veri çekilirken hata oluştu.", error=str(e), exc_info=True)
+            return []
+        finally:
+            if conn:
+                await conn.close()
