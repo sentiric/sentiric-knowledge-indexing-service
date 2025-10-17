@@ -3,6 +3,7 @@ import asyncio
 import time
 import structlog
 import asyncpg
+import uuid  # <-- YENİ: Benzersiz ID oluşturmak için import edin
 from datetime import datetime, timezone
 from qdrant_client import QdrantClient, models
 from sentence_transformers import SentenceTransformer
@@ -16,6 +17,7 @@ from app.ingesters import ingester_factory
 logger = structlog.get_logger(__name__)
 
 class IndexingManager:
+    # __init__ ve diğer metotlar aynı kalacak...
     def __init__(self, app_state):
         self.app_state = app_state
         self.model = None
@@ -64,7 +66,6 @@ class IndexingManager:
                 await conn.close()
 
     async def _get_datasources_to_index(self, tenant_id: str = None) -> list[DataSource]:
-        # ... (içerik değişmedi)
         datasources = []
         conn = None
         try:
@@ -85,7 +86,6 @@ class IndexingManager:
         return datasources
 
     async def _update_datasource_timestamp(self, source_id: int):
-        # ... (içerik değişmedi)
         conn = None
         try:
             conn = await asyncpg.connect(dsn=settings.POSTGRES_URL)
@@ -140,12 +140,19 @@ class IndexingManager:
                 collection_name = f"{settings.QDRANT_DB_COLLECTION_PREFIX}{source.tenant_id}"
                 await self.ensure_collection_exists(collection_name)
 
+                # ==================== DÜZELTME BAŞLANGICI ====================
+                # YENİ: Her vektör için benzersiz bir ID listesi oluşturuluyor.
+                point_ids = [str(uuid.uuid4()) for _ in vectors]
+                
                 log.info(f"{len(vectors)} vektör Qdrant koleksiyonuna yazılıyor.", collection=collection_name)
                 self.qdrant_client.upsert(
                     collection_name=collection_name,
-                    points=models.Batch(ids=None, vectors=vectors, payloads=all_metadatas),
+                    # DEĞİŞTİ: ids=None yerine oluşturulan ID listesi kullanılıyor.
+                    points=models.Batch(ids=point_ids, vectors=vectors, payloads=all_metadatas),
                     wait=True
                 )
+                # ===================== DÜZELTME SONU =======================
+                
                 metrics.VECTORS_UPSERTED_TOTAL.labels(tenant_id=source.tenant_id, collection=collection_name).inc(len(vectors))
                 
                 await self._update_datasource_timestamp(source.id)
@@ -162,7 +169,6 @@ class IndexingManager:
         logger.info("İndeksleme döngüsü tamamlandı.")
 
     async def ensure_collection_exists(self, collection_name: str):
-        # ... (içerik değişmedi)
         try:
             self.qdrant_client.get_collection(collection_name=collection_name)
         except Exception:
