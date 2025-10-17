@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     KNOWLEDGE_INDEXING_SERVICE_GRPC_PORT: int = 17031
     KNOWLEDGE_INDEXING_SERVICE_METRICS_PORT: int = 17032
     
+    # mTLS Sertifika Yolları (YENİ)
+    GRPC_TLS_CA_PATH: str
+    KNOWLEDGE_INDEXING_SERVICE_CERT_PATH: str
+    KNOWLEDGE_INDEXING_SERVICE_KEY_PATH: str
+        
     # RAG Kaynak Ayarları
     POSTGRES_URL: str
     

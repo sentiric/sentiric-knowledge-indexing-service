@@ -1,6 +1,7 @@
 # app/main.py
 import asyncio
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import grpc
 import structlog
@@ -47,10 +48,28 @@ async def serve_grpc():
     """gRPC sunucusunu başlatır."""
     server = grpc.aio.server()
     indexing_pb2_grpc.add_KnowledgeIndexingServiceServicer_to_server(KnowledgeIndexingServicer(), server)
-    listen_addr = f'[::]:{settings.KNOWLEDGE_INDEXING_SERVICE_GRPC_PORT}'
-    server.add_insecure_port(listen_addr)
+    
+    # --- mTLS GÜVENLİK GÜNCELLEMESİ ---
+    try:
+        private_key = Path(settings.KNOWLEDGE_INDEXING_SERVICE_KEY_PATH).read_bytes()
+        certificate_chain = Path(settings.KNOWLEDGE_INDEXING_SERVICE_CERT_PATH).read_bytes()
+        ca_cert = Path(settings.GRPC_TLS_CA_PATH).read_bytes()
+
+        server_credentials = grpc.ssl_server_credentials(
+            private_key_certificate_chain_pairs=[(private_key, certificate_chain)],
+            root_certificates=ca_cert,
+            require_client_auth=True
+        )
+        listen_addr = f'[::]:{settings.KNOWLEDGE_INDEXING_SERVICE_GRPC_PORT}'
+        server.add_secure_port(listen_addr, server_credentials)
+        logger.info("Güvenli (mTLS) gRPC sunucusu başlatılıyor...", address=listen_addr)
+    except FileNotFoundError:
+        logger.warning("Sertifika dosyaları bulunamadı, güvensiz gRPC portu kullanılıyor.")
+        listen_addr = f'[::]:{settings.KNOWLEDGE_INDEXING_SERVICE_GRPC_PORT}'
+        server.add_insecure_port(listen_addr)
+    # --- GÜNCELLEME SONU ---
+    
     app_state.grpc_server = server
-    logger.info("gRPC sunucusu başlatılıyor...", address=listen_addr)
     await server.start()
     await server.wait_for_termination()
 
