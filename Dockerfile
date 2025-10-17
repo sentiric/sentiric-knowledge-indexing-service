@@ -1,4 +1,4 @@
-### 📄 File: Dockerfile (YENİ VE DÜZELTİLMİŞ VERSİYON - v2.1)
+### 📄 File: Dockerfile (YENİ VE DÜZELTİLMİŞ VERSİYON - v2.2 gRPC & Metrics Destekli)
 # Bu Dockerfile, hem CPU hem de GPU imajlarını dinamik ve uyumlu bir şekilde oluşturur.
 
 # --- Build Argümanları ---
@@ -32,12 +32,10 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY requirements.txt .
 
 # --- DÜZELTİLMİŞ VE DAHA SAĞLAM BAĞIMLILIK KURULUMU ---
-# Process substitution (<(...)) yerine standart shell komutları kullanıyoruz.
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip && \
     if [ "$TARGET_DEVICE" = "gpu" ]; then \
         echo "GPU imajı: PyTorch zaten mevcut, diğer bağımlılıklar kuruluyor."; \
-        # 'torch' içeren satırları atlayarak geçici bir requirements dosyası oluştur
         grep -v 'torch' requirements.txt > requirements.tmp.txt; \
         pip install --no-cache-dir -r requirements.tmp.txt; \
     else \
@@ -85,4 +83,5 @@ USER appuser
 EXPOSE 17030 17031 17032
 
 # knowledge-indexing-service için:
-CMD ["python", "-m", "app.main"]
+# Uvicorn yerine tüm sunucuları başlatan runner'ı çalıştır
+CMD ["python", "-m", "app.runner"]

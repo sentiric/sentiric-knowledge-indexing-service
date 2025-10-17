@@ -1,4 +1,4 @@
-# sentiric-knowledge-indexing-service/app/core/config.py
+# app/core/config.py
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 
@@ -10,23 +10,23 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     SERVICE_VERSION: str = "0.1.0"
     
+    # Network ve Port Ayarları
+    KNOWLEDGE_INDEXING_SERVICE_HTTP_PORT: int = 17030
+    KNOWLEDGE_INDEXING_SERVICE_GRPC_PORT: int = 17031
+    KNOWLEDGE_INDEXING_SERVICE_METRICS_PORT: int = 17032
+    
     # RAG Kaynak Ayarları
-    POSTGRES_URL: Optional[str] = None # PostgreSQL'den veri çekmek için
-    RABBITMQ_URL: Optional[str] = None # Event dinlemek için
+    POSTGRES_URL: str
     
     # Vector Database (Qdrant) Ayarları
     QDRANT_HTTP_URL: str
-    QDRANT_GRPC_URL: Optional[str] = None
     QDRANT_API_KEY: Optional[str] = None
-    
-    # Qdrant'ta oluşturulacak koleksiyonların ön eki. Sonuna tenant_id eklenecek.
     QDRANT_DB_COLLECTION_PREFIX: str = "sentiric_kb_"
     
-    # Metinleri vektöre çevirmek için kullanılacak model. İki servisin de aynı modeli kullanması şarttır.
+    # Embedding Modeli Ayarları
     QDRANT_DB_EMBEDDING_MODEL_NAME: str = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
     
-    # Bu servise özgü ayarlar
-    # Worker'ın ne sıklıkla yeniden indeksleme yapacağı (saniye cinsinden)
+    # Worker Ayarları
     KNOWLEDGE_INDEXING_INTERVAL_SECONDS: int = 3600 # Saatlik indeksleme
 
     model_config = SettingsConfigDict(
