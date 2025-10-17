@@ -7,10 +7,6 @@ from app.core.config import settings
 _log_setup_done = False
 
 def setup_logging():
-    """
-    Tüm servislerde kullanılacak standart loglama yapılandırması.
-    Ortama göre (development/production) farklı formatlayıcılar kullanır.
-    """
     global _log_setup_done
     if _log_setup_done:
         return
@@ -18,17 +14,13 @@ def setup_logging():
     log_level = settings.LOG_LEVEL.upper()
     env = settings.ENV.lower()
 
-    logging.basicConfig(
-        format="%(message)s",
-        stream=sys.stdout,
-        level=log_level
-    )
+    logging.basicConfig(format="%(message)s", stream=sys.stdout, level=log_level)
 
     shared_processors = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
-        structlog.stdlib.PositionalArgumentsFormatter(), # <-- PROAKTİF DÜZELTME
+        structlog.stdlib.PositionalArgumentsFormatter(),
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
@@ -60,11 +52,9 @@ def setup_logging():
     root_logger = logging.getLogger()
     if root_logger.hasHandlers():
         root_logger.handlers.clear()
-        
     root_logger.addHandler(handler)
     root_logger.setLevel(log_level)
     
     _log_setup_done = True
-    
     logger = structlog.get_logger("sentiric_knowledge_indexing_service")
     logger.info("Loglama başarıyla yapılandırıldı.", env=env, log_level=log_level)
