@@ -10,29 +10,33 @@ logger = structlog.get_logger(__name__)
 class FileIngester(BaseIngester):
     """
     Yerel dosya sisteminden (container'a mount edilmiş) metin dosyalarını okuyan yükleyici.
-    Şimdilik .txt ve .md uzantılarını destekler.
+    Markdown (.md) ve Text (.txt) dosyalarını destekler.
     """
 
     async def load(self, source: DataSource) -> List[Document]:
+        # URI, container içindeki mutlak yol olmalıdır (örn: /opt/sentiric/assets/...)
         file_path = Path(source.source_uri)
         
-        logger.info("Yerel dosya kaynağından veri okunuyor...", path=str(file_path))
+        log = logger.bind(path=str(file_path), tenant_id=source.tenant_id)
+        log.info("Yerel dosya kaynağından veri okunuyor...")
 
         if not file_path.exists():
-            logger.error("Dosya bulunamadı.", path=str(file_path))
+            log.error("Dosya bulunamadı.")
             return []
 
         if not file_path.is_file():
-            logger.error("Belirtilen yol bir dosya değil.", path=str(file_path))
+            log.error("Belirtilen yol bir dosya değil.")
             return []
 
         try:
-            # Dosya okuma işlemini ana event loop'u bloklamamak için thread'e taşıyoruz
-            content = await asyncio.to_thread(self._read_file, file_path)
+            # IO işlemini thread'e taşıyarak event loop'u bloklamıyoruz
+            content = await asyncio.to_thread(self._read_file_safe, file_path)
             
             if not content:
-                logger.warning("Dosya boş.", path=str(file_path))
+                log.warning("Dosya boş veya okunamadı.")
                 return []
+
+            log.info("Dosya başarıyla okundu.", size=len(content))
 
             return [
                 Document(
@@ -47,16 +51,16 @@ class FileIngester(BaseIngester):
                 )
             ]
         except Exception as e:
-            logger.error("Dosya okunurken hata oluştu.", path=str(file_path), error=str(e))
+            log.error("Dosya işlenirken beklenmedik hata.", error=str(e))
             return []
 
-    def _read_file(self, path: Path) -> str:
-        """Bloklayan IO işlemi."""
-        # Sadece text tabanlı dosyaları güvenli okumaya çalışıyoruz
+    def _read_file_safe(self, path: Path) -> str:
+        """Dosyayı güvenli bir şekilde okur."""
         try:
             return path.read_text(encoding='utf-8')
         except UnicodeDecodeError:
-            # UTF-8 başarısız olursa fallback (örn: latin-1) denenebilir veya hata fırlatılır
-            # Şimdilik loglayıp boş dönüyoruz.
-            logger.error("Dosya UTF-8 formatında değil.", path=str(path))
-            return ""
+            logger.warning("UTF-8 decode hatası, latin-1 deneniyor...", path=str(path))
+            try:
+                return path.read_text(encoding='latin-1')
+            except Exception:
+                return ""
