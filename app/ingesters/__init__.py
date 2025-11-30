@@ -1,7 +1,7 @@
-# sentiric-knowledge-indexing-service/app/ingesters/__init__.py
 from .base import BaseIngester
 from .postgres_ingester import PostgresIngester
 from .web_ingester import WebIngester
+from .file_ingester import FileIngester  # YENİ
 from app.core.models import DataSource
 
 def ingester_factory(source: DataSource) -> BaseIngester:
@@ -12,6 +12,7 @@ def ingester_factory(source: DataSource) -> BaseIngester:
         return PostgresIngester()
     elif source.source_type == "web":
         return WebIngester()
-    # TODO: 'file' ingester eklenecek
+    elif source.source_type == "file":
+        return FileIngester()
     else:
         raise ValueError(f"Desteklenmeyen kaynak türü: {source.source_type}")
