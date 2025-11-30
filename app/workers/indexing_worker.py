@@ -3,7 +3,7 @@ import asyncio
 import time
 import structlog
 import asyncpg
-import uuid  # <-- YENİ: Benzersiz ID oluşturmak için import edin
+import uuid
 from datetime import datetime, timezone
 from qdrant_client import QdrantClient, models
 from sentence_transformers import SentenceTransformer
@@ -17,7 +17,6 @@ from app.ingesters import ingester_factory
 logger = structlog.get_logger(__name__)
 
 class IndexingManager:
-    # __init__ ve diğer metotlar aynı kalacak...
     def __init__(self, app_state):
         self.app_state = app_state
         self.model = None
@@ -125,10 +124,20 @@ class IndexingManager:
                     continue
 
                 all_chunks, all_metadatas = [], []
+                
+                # --- KRİTİK DÜZELTME BAŞLANGICI ---
+                # Metin parçalarını payload'a ekliyoruz
                 for doc in documents:
                     chunks = split_text_into_chunks(doc.page_content)
                     all_chunks.extend(chunks)
-                    all_metadatas.extend([doc.metadata] * len(chunks))
+                    
+                    for chunk in chunks:
+                        # Metadata'nın kopyasını al
+                        chunk_metadata = doc.metadata.copy()
+                        # İçeriği 'content' anahtarı ile ekle (Query servisi bunu bekliyor)
+                        chunk_metadata["content"] = chunk
+                        all_metadatas.append(chunk_metadata)
+                # --- KRİTİK DÜZELTME SONU ---
 
                 if not all_chunks:
                     log.warning("Metin parçaları (chunks) oluşturulamadı.")
@@ -140,18 +149,14 @@ class IndexingManager:
                 collection_name = f"{settings.QDRANT_DB_COLLECTION_PREFIX}{source.tenant_id}"
                 await self.ensure_collection_exists(collection_name)
 
-                # ==================== DÜZELTME BAŞLANGICI ====================
-                # YENİ: Her vektör için benzersiz bir ID listesi oluşturuluyor.
                 point_ids = [str(uuid.uuid4()) for _ in vectors]
                 
                 log.info(f"{len(vectors)} vektör Qdrant koleksiyonuna yazılıyor.", collection=collection_name)
                 self.qdrant_client.upsert(
                     collection_name=collection_name,
-                    # DEĞİŞTİ: ids=None yerine oluşturulan ID listesi kullanılıyor.
                     points=models.Batch(ids=point_ids, vectors=vectors, payloads=all_metadatas),
                     wait=True
                 )
-                # ===================== DÜZELTME SONU =======================
                 
                 metrics.VECTORS_UPSERTED_TOTAL.labels(tenant_id=source.tenant_id, collection=collection_name).inc(len(vectors))
                 
