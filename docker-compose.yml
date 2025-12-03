@@ -1,0 +1,56 @@
+# 
+
+networks:
+  sentiric-net:
+    name: "${NETWORK_NAME:-sentiric.cloud}"
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${NETWORK_SUBNET:-10.88.0.0/16}
+          gateway: ${NETWORK_GATEWAY:-10.88.0.1}
+          
+volumes:
+  # =============================================================
+  # KATMAN 6: YATAY YETENEKLER (HORIZONTAL CAPABILITIES)
+  # =============================================================
+
+  # [horizontal-capabilities]
+  knowledge-indexing-models:   
+  knowledge-indexing-cache:  
+
+services:
+  # =============================================================
+  # KATMAN 6: YATAY YETENEKLER (HORIZONTAL CAPABILITIES)
+  # =============================================================   
+
+  #  [capability-knowledge]: Bilgi Yönetimi Yetenekleri (Knowledge Capabilities)
+  knowledge-indexing-service:
+    image: ghcr.io/sentiric/sentiric-knowledge-indexing-service:${TAG:-latest}
+    env_file: ["${ENV_FILE_PATH}"]    
+    volumes: 
+      - "${CERTIFICATES_REPO_PATH}:/sentiric-certificates:ro"
+      - "${ASSETS_REPO_PATH}:/opt/sentiric/assets:ro" 
+      - knowledge-indexing-cache:/app/model-cache        
+    ports: 
+      - "${KNOWLEDGE_INDEXING_SERVICE_HTTP_PORT:-17030}:${KNOWLEDGE_INDEXING_SERVICE_HTTP_PORT:-17030}"
+      - "${KNOWLEDGE_INDEXING_SERVICE_GRPC_PORT:-17031}:${KNOWLEDGE_INDEXING_SERVICE_GRPC_PORT:-17031}"
+      - "${KNOWLEDGE_INDEXING_SERVICE_METRICS_PORT:-17032}:${KNOWLEDGE_INDEXING_SERVICE_METRICS_PORT:-17032}"              
+    networks:
+      sentiric-net:
+        ipv4_address: ${KNOWLEDGE_INDEXING_SERVICE_IPV4_ADDRESS:-10.88.70.3}
+    dns:
+      - ${DISCOVERY_SERVICE_IPV4_ADDRESS:-10.88.5.1}
+      - ${PRIMARY_DNS:-8.8.8.8}
+      - ${SECONDARY_DNS:-1.1.1.1}    
+    dns_search:
+      - ${DISCOVERY_DNS_SEARCH_DOMAIN}          
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${KNOWLEDGE_INDEXING_SERVICE_HTTP_PORT:-17030}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10m
+    depends_on:
+      postgres: { condition: service_healthy }
+      qdrant: { condition: service_healthy }  

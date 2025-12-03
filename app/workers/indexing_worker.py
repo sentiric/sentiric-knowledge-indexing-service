@@ -5,6 +5,8 @@ import structlog
 import asyncpg
 import uuid
 from datetime import datetime, timezone
+from typing import List, Dict, Any
+
 from qdrant_client import QdrantClient, models
 from sentence_transformers import SentenceTransformer
 
@@ -16,16 +18,23 @@ from app.ingesters import ingester_factory
 
 logger = structlog.get_logger(__name__)
 
+# Model embedding işlemi için batch size (Bellek yönetimi için kritik)
+EMBEDDING_BATCH_SIZE = 32
+# Qdrant upsert işlemi için batch size
+UPSERT_BATCH_SIZE = 100
+
 class IndexingManager:
     def __init__(self, app_state):
         self.app_state = app_state
         self.model = None
         self.qdrant_client = None
         self.trigger_event = asyncio.Event()
+        self._is_running = False
 
     async def initialize(self):
         try:
             logger.info("Embedding modeli yükleniyor...", model=settings.QDRANT_DB_EMBEDDING_MODEL_NAME)
+            # Modeli thread içinde yükleyerek ana döngüyü bloklamasını engellemeye çalışıyoruz ama init aşamasında bloklamak kabul edilebilir.
             self.model = SentenceTransformer(settings.QDRANT_DB_EMBEDDING_MODEL_NAME, cache_folder="/app/model-cache")
             
             await self._wait_for_service("Qdrant", self._check_qdrant)
@@ -38,7 +47,7 @@ class IndexingManager:
             self.app_state.is_ready = False
             raise
 
-    async def _wait_for_service(self, service_name: str, check_function, retries=5, delay=5):
+    async def _wait_for_service(self, service_name: str, check_function, retries=10, delay=5):
         for i in range(retries):
             try:
                 await check_function()
@@ -51,6 +60,7 @@ class IndexingManager:
                 await asyncio.sleep(delay)
 
     async def _check_qdrant(self):
+        # Senkron client, thread içinde çalıştırılabilir ama init için direkt çağırıyoruz
         client = QdrantClient(url=settings.QDRANT_HTTP_URL, api_key=settings.QDRANT_API_KEY, timeout=10)
         client.get_collections()
         self.qdrant_client = client
@@ -69,14 +79,21 @@ class IndexingManager:
         conn = None
         try:
             conn = await asyncpg.connect(dsn=settings.POSTGRES_URL)
-            if tenant_id:
-                records = await conn.fetch("SELECT id, tenant_id, source_type, source_uri FROM datasources WHERE tenant_id = $1 AND is_active = TRUE", tenant_id)
-            else:
-                records = await conn.fetch("SELECT id, tenant_id, source_type, source_uri FROM datasources WHERE is_active = TRUE")
+            query = "SELECT id, tenant_id, source_type, source_uri, last_indexed_at FROM datasources WHERE is_active = TRUE"
+            args = []
             
+            if tenant_id and tenant_id != "all":
+                query += " AND tenant_id = $1"
+                args.append(tenant_id)
+            
+            # Önceliklendirme: Hiç indekslenmemişler önce, sonra eskiler
+            query += " ORDER BY last_indexed_at NULLS FIRST, updated_at ASC LIMIT 50"
+            
+            records = await conn.fetch(query, *args)
             datasources = [DataSource(**record) for record in records]
+            
             if datasources:
-                logger.info(f"{len(datasources)} adet veri kaynağı işlenmek üzere bulundu.")
+                logger.info(f"{len(datasources)} adet veri kaynağı işlenmek üzere kuyruğa alındı.")
         except Exception as e:
             logger.error("Veri kaynakları çekilirken hata oluştu.", error=str(e), exc_info=True)
         finally:
@@ -84,100 +101,158 @@ class IndexingManager:
                 await conn.close()
         return datasources
 
-    async def _update_datasource_timestamp(self, source_id: int):
+    async def _update_datasource_status(self, source_id: int, status: str, update_time: bool = False):
         conn = None
         try:
             conn = await asyncpg.connect(dsn=settings.POSTGRES_URL)
-            await conn.execute(
-                "UPDATE datasources SET last_indexed_at = $1 WHERE id = $2",
-                datetime.now(timezone.utc),
-                source_id
-            )
-            logger.debug("Veri kaynağının zaman damgası güncellendi.", source_id=source_id)
+            if update_time:
+                await conn.execute(
+                    "UPDATE datasources SET last_indexed_at = $1, last_status = $2 WHERE id = $3",
+                    datetime.now(timezone.utc), status, source_id
+                )
+            else:
+                await conn.execute(
+                    "UPDATE datasources SET last_status = $1 WHERE id = $2",
+                     status, source_id
+                )
         except Exception as e:
-            logger.error("Zaman damgası güncellenirken hata oluştu.", source_id=source_id, error=str(e))
+            logger.error("Veri kaynağı durumu güncellenirken hata.", source_id=source_id, error=str(e))
         finally:
             if conn:
                 await conn.close()
 
+    # --- KRİTİK PERFORMANS İYİLEŞTİRMESİ: ASENKRON EMBEDDING ---
+    async def _compute_embeddings(self, texts: List[str]) -> List[List[float]]:
+        """
+        CPU-bound olan embedding işlemini ana event loop'u bloklamadan
+        ayrı bir thread'de çalıştırır.
+        """
+        loop = asyncio.get_running_loop()
+        # Executor içinde senkron fonksiyonu çağır
+        return await loop.run_in_executor(
+            None, 
+            lambda: self.model.encode(texts, batch_size=EMBEDDING_BATCH_SIZE, show_progress_bar=False, convert_to_numpy=False).tolist()
+        )
+
     @metrics.INDEXING_CYCLE_DURATION_SECONDS.time()
     async def run_indexing_cycle(self, tenant_id: str = None):
-        """Metrik takibi eklenmiş tek bir tam indeksleme döngüsü."""
-        logger.info("İndeksleme döngüsü başlatıldı.", trigger_tenant=tenant_id or "all")
-        
-        datasources = await self._get_datasources_to_index(tenant_id)
-        if not datasources:
-            logger.info("İşlenecek aktif veri kaynağı bulunamadı.")
+        if self._is_running:
+            logger.warning("İndeksleme döngüsü zaten çalışıyor, yeni istek atlandı.")
             return
         
-        for source in datasources:
-            log = logger.bind(tenant_id=source.tenant_id, source_uri=source.source_uri)
-            status = "success"
-            try:
-                log.info("Veri kaynağı işleniyor...")
-                ingester = ingester_factory(source)
-                documents = await ingester.load(source)
-                metrics.DOCUMENTS_LOADED_TOTAL.labels(tenant_id=source.tenant_id, source_type=source.source_type).inc(len(documents))
+        self._is_running = True
+        logger.info("İndeksleme döngüsü başlatıldı.", trigger_tenant=tenant_id or "all")
+        
+        try:
+            datasources = await self._get_datasources_to_index(tenant_id)
+            if not datasources:
+                logger.info("İşlenecek aktif veri kaynağı bulunamadı.")
+                return
+            
+            for source in datasources:
+                await self._process_single_datasource(source)
                 
-                if not documents:
-                    log.warning("İşlenecek doküman bulunamadı.")
-                    continue
+            metrics.LAST_INDEXING_TIMESTAMP.set_to_current_time()
+            logger.info("İndeksleme döngüsü tamamlandı.")
+            
+        except Exception as e:
+            logger.error("Döngü sırasında genel hata.", error=str(e), exc_info=True)
+        finally:
+            self._is_running = False
 
-                all_chunks, all_metadatas = [], []
-                
-                # --- KRİTİK DÜZELTME BAŞLANGICI ---
-                # Metin parçalarını payload'a ekliyoruz
-                for doc in documents:
-                    chunks = split_text_into_chunks(doc.page_content)
-                    all_chunks.extend(chunks)
+    async def _process_single_datasource(self, source: DataSource):
+        log = logger.bind(tenant_id=source.tenant_id, source_uri=source.source_uri)
+        
+        try:
+            await self._update_datasource_status(source.id, "in_progress")
+            log.info("Veri kaynağı işleniyor...")
+            
+            # 1. Veriyi Çek (IO Bound)
+            ingester = ingester_factory(source)
+            documents = await ingester.load(source)
+            metrics.DOCUMENTS_LOADED_TOTAL.labels(tenant_id=source.tenant_id, source_type=source.source_type).inc(len(documents))
+            
+            if not documents:
+                log.warning("Doküman boş döndü, atlanıyor.")
+                await self._update_datasource_status(source.id, "empty_or_failed")
+                return
+
+            # 2. Chunking (CPU Bound - hafif)
+            all_chunks = []
+            all_payloads = []
+            
+            for doc in documents:
+                chunks = split_text_into_chunks(doc.page_content)
+                for chunk in chunks:
+                    payload = doc.metadata.copy()
+                    payload["content"] = chunk # Retrieval için kritik
                     
-                    for chunk in chunks:
-                        # Metadata'nın kopyasını al
-                        chunk_metadata = doc.metadata.copy()
-                        # İçeriği 'content' anahtarı ile ekle (Query servisi bunu bekliyor)
-                        chunk_metadata["content"] = chunk
-                        all_metadatas.append(chunk_metadata)
-                # --- KRİTİK DÜZELTME SONU ---
+                    all_chunks.append(chunk)
+                    all_payloads.append(payload)
 
-                if not all_chunks:
-                    log.warning("Metin parçaları (chunks) oluşturulamadı.")
-                    continue
+            if not all_chunks:
+                log.warning("Chunk oluşturulamadı.")
+                await self._update_datasource_status(source.id, "no_chunks")
+                return
 
-                log.info(f"{len(all_chunks)} adet metin parçası vektöre dönüştürülüyor...")
-                vectors = self.model.encode(all_chunks, show_progress_bar=False).tolist()
+            # 3. Embedding (CPU Bound - AĞIR - Thread'e taşındı)
+            log.info(f"{len(all_chunks)} parça vektörleştiriliyor...")
+            vectors = await self._compute_embeddings(all_chunks)
 
-                collection_name = f"{settings.QDRANT_DB_COLLECTION_PREFIX}{source.tenant_id}"
-                await self.ensure_collection_exists(collection_name)
+            # 4. Koleksiyon Yönetimi (IO Bound)
+            collection_name = f"{settings.QDRANT_DB_COLLECTION_PREFIX}{source.tenant_id}"
+            await self.ensure_collection_exists(collection_name)
 
-                point_ids = [str(uuid.uuid4()) for _ in vectors]
-                
-                log.info(f"{len(vectors)} vektör Qdrant koleksiyonuna yazılıyor.", collection=collection_name)
+            # 5. Upsert (IO Bound - Batching ile)
+            # Veriyi eski kaynaktan temizle (Overwrite stratejisi)
+            # source_uri'ye göre eski vektörleri sil ki duplikasyon olmasın
+            self.qdrant_client.delete(
+                collection_name=collection_name,
+                points_selector=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="source_uri",
+                            match=models.MatchValue(value=source.source_uri)
+                        )
+                    ]
+                )
+            )
+
+            points = []
+            for i, vector in enumerate(vectors):
+                points.append(models.PointStruct(
+                    id=str(uuid.uuid4()),
+                    vector=vector,
+                    payload=all_payloads[i]
+                ))
+
+            # Batch upsert
+            total_upserted = 0
+            for i in range(0, len(points), UPSERT_BATCH_SIZE):
+                batch = points[i : i + UPSERT_BATCH_SIZE]
                 self.qdrant_client.upsert(
                     collection_name=collection_name,
-                    points=models.Batch(ids=point_ids, vectors=vectors, payloads=all_metadatas),
+                    points=batch,
                     wait=True
                 )
-                
-                metrics.VECTORS_UPSERTED_TOTAL.labels(tenant_id=source.tenant_id, collection=collection_name).inc(len(vectors))
-                
-                await self._update_datasource_timestamp(source.id)
-                log.info("Veri kaynağı başarıyla indekslendi.")
-            except Exception as e:
-                status = "failed"
-                log.error("Veri kaynağı işlenirken bir hata oluştu.", error=str(e), exc_info=True)
-            finally:
-                metrics.DATASOURCES_PROCESSED_TOTAL.labels(
-                    tenant_id=source.tenant_id, source_type=source.source_type, status=status
-                ).inc()
+                total_upserted += len(batch)
+            
+            metrics.VECTORS_UPSERTED_TOTAL.labels(tenant_id=source.tenant_id, collection=collection_name).inc(total_upserted)
+            
+            await self._update_datasource_status(source.id, "success", update_time=True)
+            metrics.DATASOURCES_PROCESSED_TOTAL.labels(tenant_id=source.tenant_id, source_type=source.source_type, status="success").inc()
+            log.info("İndeksleme başarılı.", vectors_count=total_upserted)
 
-        metrics.LAST_INDEXING_TIMESTAMP.set_to_current_time()
-        logger.info("İndeksleme döngüsü tamamlandı.")
+        except Exception as e:
+            log.error("Veri kaynağı işlenirken hata.", error=str(e))
+            await self._update_datasource_status(source.id, "failed")
+            metrics.DATASOURCES_PROCESSED_TOTAL.labels(tenant_id=source.tenant_id, source_type=source.source_type, status="failed").inc()
 
     async def ensure_collection_exists(self, collection_name: str):
         try:
             self.qdrant_client.get_collection(collection_name=collection_name)
         except Exception:
-            logger.info(f"Koleksiyon bulunamadı, yeni koleksiyon oluşturuluyor: {collection_name}")
+            logger.info(f"Koleksiyon oluşturuluyor: {collection_name}")
             self.qdrant_client.recreate_collection(
                 collection_name=collection_name,
                 vectors_config=models.VectorParams(
@@ -185,13 +260,26 @@ class IndexingManager:
                     distance=models.Distance.COSINE
                 )
             )
+            # Payload Indexing (Filtreleme performansı için kritik)
+            self.qdrant_client.create_payload_index(
+                collection_name=collection_name,
+                field_name="source_uri",
+                field_schema=models.PayloadSchemaType.KEYWORD
+            )
+            self.qdrant_client.create_payload_index(
+                collection_name=collection_name,
+                field_name="source_type",
+                field_schema=models.PayloadSchemaType.KEYWORD
+            )
 
     async def start_worker_loop(self):
         try:
             await self.initialize()
         except Exception:
-            return
+            logger.error("Worker başlatılamadı, retry döngüsüne giriyor.")
+            # Kritik hata olsa bile container'ı öldürme, retry yap.
         
+        # İlk açılışta bir tur çalıştır
         await self.run_indexing_cycle()
 
         while True:
