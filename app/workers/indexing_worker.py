@@ -121,7 +121,7 @@ class IndexingManager:
             if conn:
                 await conn.close()
 
-    # --- KRİTİK PERFORMANS İYİLEŞTİRMESİ: ASENKRON EMBEDDING ---
+    # --- DÜZELTME: convert_to_numpy=True (default) kullanılarak .tolist() hatası giderildi ---
     async def _compute_embeddings(self, texts: List[str]) -> List[List[float]]:
         """
         CPU-bound olan embedding işlemini ana event loop'u bloklamadan
@@ -129,9 +129,10 @@ class IndexingManager:
         """
         loop = asyncio.get_running_loop()
         # Executor içinde senkron fonksiyonu çağır
+        # convert_to_numpy=True varsayılan davranıştır, numpy array döner, .tolist() çalışır.
         return await loop.run_in_executor(
             None, 
-            lambda: self.model.encode(texts, batch_size=EMBEDDING_BATCH_SIZE, show_progress_bar=False, convert_to_numpy=False).tolist()
+            lambda: self.model.encode(texts, batch_size=EMBEDDING_BATCH_SIZE, show_progress_bar=False).tolist()
         )
 
     @metrics.INDEXING_CYCLE_DURATION_SECONDS.time()
