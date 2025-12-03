@@ -1,53 +1,35 @@
 # 🛠️ Sentiric Knowledge CLI Kullanım Kılavuzu
 
-Bu proje, veri kaynaklarını yönetmek ve indekslemeyi tetiklemek için yerleşik bir komut satırı aracı (`manage.py`) içerir.
+Bu proje, veri kaynaklarını yönetmek için `Makefile` üzerinden kolay erişilebilir komutlar sunar.
 
-## 🚀 Nasıl Kullanılır?
+## 🚀 Hızlı Komutlar
 
-Bu aracı çalıştırmanın en kolay ve önerilen yolu, halihazırda çalışan Docker konteyneri üzerinden komut göndermektir. Böylece yerel bilgisayarınıza Python kütüphanesi kurmanıza gerek kalmaz.
+Tüm komutlar, çalışan Docker konteyneri üzerinden çalıştırılır. Servisler ayakta olmalıdır (`make up`).
 
 ### 1. Veri Kaynaklarını Listeleme
 
-Mevcut tüm kayıtlı kaynakları ve durumlarını (başarılı, hatalı vb.) gösterir.
+Mevcut kaynakları ve durumlarını görmek için:
 
 ```bash
-# Konteyner ismini bulmak için: docker ps
-docker exec -it sentiric-knowledge-indexing-service python manage.py list
+make cli-list
 ```
 
 ### 2. Yeni Veri Kaynağı Ekleme
 
-Sisteme indekslenmesi için yeni bir web sitesi veya dosya ekler.
+Yeni bir web sayfası eklemek için:
 
 ```bash
-# Sentiric web sitesini ekle
-docker exec -it sentiric-knowledge-indexing-service python manage.py add "https://sentiric.ai" --type web --tenant sentiric_demo
+# Varsayılan tenant: sentiric_demo
+make cli-add URI="https://sentiric.github.io/sentiric-assets/"
+
+# Özel tenant ile:
+make cli-add URI="https://example.com" TENANT="my_company"
 ```
 
-### 3. İndekslemeyi Manuel Tetikleme
+### 3. İndekslemeyi Tetikleme
 
-Zamanlayıcıyı beklemeden, o anki tüm aktif kaynakları tarar ve günceller.
+Zamanlayıcıyı beklemeden hemen indeksleme başlatmak için:
 
 ```bash
-docker exec -it sentiric-knowledge-indexing-service python manage.py run
+make cli-run
 ```
-
----
-
-## 🐍 Yerel Çalıştırma (Opsiyonel)
-
-Eğer Docker kullanmadan, doğrudan kendi terminalinizden çalıştırmak isterseniz:
-
-1.  Sanal ortam oluşturun ve aktif edin:
-    ```bash
-    python3 -m venv venv
-    source venv/bin/activate
-    ```
-2.  Bağımlılıkları kurun:
-    ```bash
-    pip install -r requirements.txt
-    ```
-3.  `.env` dosyasındaki veritabanı ayarlarının `localhost`'u gösterdiğinden emin olun ve çalıştırın:
-    ```bash
-    python3 manage.py list
-    ```
