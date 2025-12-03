@@ -27,3 +27,5 @@ htmlcov/
 # Hassas API Key'leri ve modeller
 *.key
 *.model
+# veritabanı yüklenmeli
+.tmp
