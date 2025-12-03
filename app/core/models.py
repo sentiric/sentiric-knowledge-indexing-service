@@ -1,6 +1,7 @@
 # sentiric-knowledge-indexing-service/app/core/models.py
 from pydantic import BaseModel, HttpUrl
 from typing import Literal, Optional
+from datetime import datetime
 
 class DataSource(BaseModel):
     """
@@ -10,7 +11,9 @@ class DataSource(BaseModel):
     tenant_id: str
     source_type: Literal["postgres", "web", "file"]
     source_uri: str
-    last_indexed_at: Optional[str] = None
+    # Pydantic v2, asyncpg'den gelen datetime objesini string bekleyen alana otomatik cast etmez.
+    # Bu yüzden burayı datetime türüyle uyumlu hale getiriyoruz.
+    last_indexed_at: Optional[datetime] = None
 
 class Document:
     """

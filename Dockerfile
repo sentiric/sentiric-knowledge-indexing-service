@@ -1,4 +1,4 @@
-### 📄 File: Dockerfile (YENİ VE DÜZELTİLMİŞ VERSİYON - v2.2 gRPC & Metrics Destekli)
+### 📄 File: Dockerfile
 # Bu Dockerfile, hem CPU hem de GPU imajlarını dinamik ve uyumlu bir şekilde oluşturur.
 
 # --- Build Argümanları ---
@@ -31,7 +31,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 COPY requirements.txt .
 
-# --- DÜZELTİLMİŞ VE DAHA SAĞLAM BAĞIMLILIK KURULUMU ---
+# --- Bağımlılık Kurulumu ---
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip && \
     if [ "$TARGET_DEVICE" = "gpu" ]; then \
@@ -74,6 +74,9 @@ RUN addgroup --system --gid 1001 appgroup && \
 COPY --from=builder --chown=appuser:appgroup /opt/venv /opt/venv
 COPY --chown=appuser:appgroup app ./app
 
+# --- YENİ EKLENDİ: CLI Aracını Kopyala ---
+COPY --chown=appuser:appgroup manage.py .
+
 RUN mkdir -p /app/model-cache && \
     chown -R appuser:appgroup /app/model-cache
 
@@ -82,6 +85,4 @@ USER appuser
 # knowledge-indexing-service için:
 EXPOSE 17030 17031 17032
 
-# knowledge-indexing-service için:
-# Uvicorn yerine tüm sunucuları başlatan runner'ı çalıştır
 CMD ["python", "-m", "app.runner"]
