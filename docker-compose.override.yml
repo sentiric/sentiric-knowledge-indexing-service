@@ -1,6 +1,0 @@
-services:
-
-  knowledge-indexing-service:
-    build:
-      context: ../sentiric-knowledge-indexing-service
-      dockerfile: Dockerfile
