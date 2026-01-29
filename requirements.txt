@@ -16,4 +16,4 @@ grpcio
 grpcio-tools
 prometheus-client
 # Git bağımlılığı
-sentiric-contracts-py @ git+https://github.com/sentiric/sentiric-contracts.git@v1.9.0
+sentiric-contracts-py @ git+https://github.com/sentiric/sentiric-contracts.git@v1.13.6
