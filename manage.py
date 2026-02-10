@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Config'den al
-DB_URL = os.getenv("POSTGRES_URL", "postgres://sentiric:sentiric_pass@localhost:5432/sentiric_db")
+DB_URL = os.getenv("POSTGRES_URL", "postgres://sentiric:sentiric_pass@localhost:5432/sentiric_knowledge?sslmode=disable")
 
 async def add_source(tenant_id, source_type, uri):
     """Yeni bir veri kaynağı ekler."""
