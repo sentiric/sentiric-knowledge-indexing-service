@@ -1,4 +1,4 @@
-# app/workers/indexing_worker.py
+# Dosya: app/workers/indexing_worker.py
 import asyncio
 import time
 import structlog
@@ -22,6 +22,7 @@ logger = structlog.get_logger(__name__)
 EMBEDDING_BATCH_SIZE = 32
 # Qdrant upsert işlemi için batch size
 UPSERT_BATCH_SIZE = 100
+
 
 class IndexingManager:
     def __init__(self, app_state):
@@ -137,6 +138,12 @@ class IndexingManager:
 
     @metrics.INDEXING_CYCLE_DURATION_SECONDS.time()
     async def run_indexing_cycle(self, tenant_id: str = None):
+        
+        # [ARCH-COMPLIANCE] Arka plan worker döngüleri için Trace-ID zorunluluğu sağlandı
+        ctx = structlog.contextvars.get_contextvars()
+        if "trace_id" not in ctx:
+            structlog.contextvars.bind_contextvars(trace_id=str(uuid.uuid4()))
+
         if self._is_running:
             logger.warning("İndeksleme döngüsü zaten çalışıyor, yeni istek atlandı.")
             return

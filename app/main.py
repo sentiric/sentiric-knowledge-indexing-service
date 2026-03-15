@@ -1,11 +1,12 @@
-# app/main.py
+# Dosya: app/main.py
 import asyncio
+import uuid  # [ARCH-COMPLIANCE] trace_id için eklendi
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import grpc
 import structlog
-from fastapi import FastAPI, Response, status, Body
+from fastapi import FastAPI, Response, status, Body, Request # [ARCH-COMPLIANCE] Request eklendi
 
 from app.core.config import settings
 from app.core.logging import setup_logging
@@ -32,6 +33,12 @@ class KnowledgeIndexingServicer(indexing_pb2_grpc.KnowledgeIndexingServiceServic
     async def TriggerReindex(
         self, request: indexing_pb2.TriggerReindexRequest, context: grpc.aio.ServicerContext
     ) -> indexing_pb2.TriggerReindexResponse:
+        
+        # [ARCH-COMPLIANCE] gRPC metadata üzerinden trace_id yayılımı sağlandı
+        metadata = dict(context.invocation_metadata())
+        trace_id = metadata.get("x-trace-id", str(uuid.uuid4()))
+        structlog.contextvars.bind_contextvars(trace_id=trace_id)
+
         if not app_state.is_ready or not app_state.indexing_manager:
             await context.abort(grpc.StatusCode.UNAVAILABLE, "Worker is not ready.")
         
@@ -41,7 +48,6 @@ class KnowledgeIndexingServicer(indexing_pb2_grpc.KnowledgeIndexingServiceServic
         # Worker'a anında çalışması için sinyal gönder
         app_state.indexing_manager.trigger_event.set()
         
-        # Gerçek job_id (eğer asenkron task yönetimi olsaydı) buraya gelirdi
         return indexing_pb2.TriggerReindexResponse(success=True, job_id="triggered")
 
 async def serve_grpc():
@@ -49,25 +55,20 @@ async def serve_grpc():
     server = grpc.aio.server()
     indexing_pb2_grpc.add_KnowledgeIndexingServiceServicer_to_server(KnowledgeIndexingServicer(), server)
     
-    # --- mTLS GÜVENLİK GÜNCELLEMESİ ---
-    try:
-        private_key = Path(settings.KNOWLEDGE_INDEXING_SERVICE_KEY_PATH).read_bytes()
-        certificate_chain = Path(settings.KNOWLEDGE_INDEXING_SERVICE_CERT_PATH).read_bytes()
-        ca_cert = Path(settings.GRPC_TLS_CA_PATH).read_bytes()
+    # [ARCH-COMPLIANCE] security.grpc_communication kısıtı gereği güvensiz fallback kaldırıldı. 
+    # Sertifika yoksa servis fail olmalıdır, güvensiz porta geçemez.
+    private_key = Path(settings.KNOWLEDGE_INDEXING_SERVICE_KEY_PATH).read_bytes()
+    certificate_chain = Path(settings.KNOWLEDGE_INDEXING_SERVICE_CERT_PATH).read_bytes()
+    ca_cert = Path(settings.GRPC_TLS_CA_PATH).read_bytes()
 
-        server_credentials = grpc.ssl_server_credentials(
-            private_key_certificate_chain_pairs=[(private_key, certificate_chain)],
-            root_certificates=ca_cert,
-            require_client_auth=True
-        )
-        listen_addr = f'[::]:{settings.KNOWLEDGE_INDEXING_SERVICE_GRPC_PORT}'
-        server.add_secure_port(listen_addr, server_credentials)
-        logger.info("Güvenli (mTLS) gRPC sunucusu başlatılıyor...", address=listen_addr)
-    except FileNotFoundError:
-        logger.warning("Sertifika dosyaları bulunamadı, güvensiz gRPC portu kullanılıyor.")
-        listen_addr = f'[::]:{settings.KNOWLEDGE_INDEXING_SERVICE_GRPC_PORT}'
-        server.add_insecure_port(listen_addr)
-    # --- GÜNCELLEME SONU ---
+    server_credentials = grpc.ssl_server_credentials(
+        private_key_certificate_chain_pairs=[(private_key, certificate_chain)],
+        root_certificates=ca_cert,
+        require_client_auth=True
+    )
+    listen_addr = f'[::]:{settings.KNOWLEDGE_INDEXING_SERVICE_GRPC_PORT}'
+    server.add_secure_port(listen_addr, server_credentials)
+    logger.info("Güvenli (mTLS) gRPC sunucusu başlatılıyor...", address=listen_addr)
     
     app_state.grpc_server = server
     await server.start()
@@ -96,6 +97,15 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
+
+# [ARCH-COMPLIANCE] HTTP istekleri için Trace-ID Middleware Eklendi
+@app.middleware("http")
+async def trace_id_middleware(request: Request, call_next):
+    trace_id = request.headers.get("x-trace-id", str(uuid.uuid4()))
+    structlog.contextvars.bind_contextvars(trace_id=trace_id)
+    response = await call_next(request)
+    response.headers["X-Trace-Id"] = trace_id
+    return response
 
 @app.get("/health", status_code=status.HTTP_200_OK, tags=["Monitoring"])
 async def health_check():
