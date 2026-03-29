@@ -1,7 +1,7 @@
 # app/main.py
 import asyncio
 import sys
-import uuid  # [ARCH-COMPLIANCE] trace_id için eklendi
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -15,7 +15,6 @@ from app.core.models import ReindexRequest
 from app.core import metrics
 from app.workers.indexing_worker import IndexingManager
 
-# Kontratlardan gRPC stubs'larını import et
 from sentiric.knowledge.v1 import indexing_pb2
 from sentiric.knowledge.v1 import indexing_pb2_grpc
 
@@ -34,7 +33,6 @@ class KnowledgeIndexingServicer(indexing_pb2_grpc.KnowledgeIndexingServiceServic
         self, request: indexing_pb2.TriggerReindexRequest, context: grpc.aio.ServicerContext
     ) -> indexing_pb2.TriggerReindexResponse:
         
-        # [ARCH-COMPLIANCE] gRPC metadata üzerinden trace_id yayılımı
         metadata = dict(context.invocation_metadata())
         trace_id = metadata.get("x-trace-id", str(uuid.uuid4()))
         structlog.contextvars.bind_contextvars(trace_id=trace_id)
@@ -54,7 +52,6 @@ async def serve_grpc():
     server = grpc.aio.server()
     indexing_pb2_grpc.add_KnowledgeIndexingServiceServicer_to_server(KnowledgeIndexingServicer(), server)
     
-    # [ARCH-COMPLIANCE] mTLS Failure Policy: Eksikse KESİN OLARAK çıkış yap.
     try:
         private_key = Path(settings.KNOWLEDGE_INDEXING_SERVICE_KEY_PATH).read_bytes()
         certificate_chain = Path(settings.KNOWLEDGE_INDEXING_SERVICE_CERT_PATH).read_bytes()
@@ -81,7 +78,6 @@ async def serve_grpc():
 async def lifespan(app: FastAPI):
     setup_logging()
     
-    # [ARCH-COMPLIANCE] Trace-ID set for startup lifecycle
     structlog.contextvars.bind_contextvars(trace_id=str(uuid.uuid4()))
     metrics.SERVICE_INFO.info({'version': settings.SERVICE_VERSION})
     logger.info(f"Knowledge Indexing Service booting up (v{settings.SERVICE_VERSION})", event_name="SYSTEM_STARTUP")
@@ -91,7 +87,6 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    # [ARCH-COMPLIANCE] Graceful Shutdown Event
     logger.info("Knowledge Indexing Service is gracefully shutting down", event_name="SERVICE_STOPPED")
     if app_state.grpc_server:
         await app_state.grpc_server.stop(grace=5)
@@ -105,7 +100,6 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# [ARCH-COMPLIANCE] HTTP Trace-ID Middleware
 @app.middleware("http")
 async def trace_id_middleware(request: Request, call_next):
     trace_id = request.headers.get("x-trace-id", str(uuid.uuid4()))

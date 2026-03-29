@@ -1,6 +1,7 @@
+# pyproject.toml
 [tool.poetry]
 name = "sentiric-knowledge-indexing-service"
-version = "0.2.1"
+version = "0.3.0"
 description = "RAG Indexing Service for ingesting data into vector DB."
 authors = ["Sentiric Team"]
 license = "Apache-2.0"
@@ -14,20 +15,16 @@ pydantic = "^2.7.3"
 pydantic-settings = "^2.3.4"
 python-dotenv = "^1.0.1"
 structlog = "^24.2.0"
-asyncpg = "^0.29.0" # PostgreSQL için
+asyncpg = "^0.29.0"
 httpx = "^0.27.0"
 beautifulsoup4 = "^4.12.3"
 qdrant-client = "^1.9.0"
 sentence-transformers = "^2.7.0"
 torch = "^2.3.1"
-# gRPC için eklendi
 grpcio = "^1.64.1"
 grpcio-tools = "^1.64.1"
-# Metrikler için eklendi
 prometheus-client = "^0.20.0"
-# Kontratlar
 sentiric-contracts-py = { git = "https://github.com/sentiric/sentiric-contracts.git", tag = "v1.13.6" }
-
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2.2"

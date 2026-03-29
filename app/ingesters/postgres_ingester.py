@@ -31,7 +31,6 @@ class PostgresIngester(BaseIngester):
 
         conn = None
         try:
-            # [ARCH-COMPLIANCE] Explicit Timeouts for External Network Calls
             conn = await asyncio.wait_for(asyncpg.connect(settings.POSTGRES_URL), timeout=15)
             records = await asyncio.wait_for(conn.fetch(query, source.tenant_id), timeout=60)
             

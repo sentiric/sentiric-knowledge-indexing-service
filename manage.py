@@ -7,7 +7,6 @@ import os
 import structlog
 from dotenv import load_dotenv
 
-# SUTS v4.0 Basic Enforcement for CLI
 structlog.configure(
     processors=[
         structlog.processors.add_log_level,
@@ -54,7 +53,6 @@ async def list_sources(tenant_id=None):
         rows = await conn.fetch(query, *args)
         
         sources_list = [dict(r) for r in rows]
-        # CLI'da formatlı JSON çıktısı vermek için
         logger.info("Retrieved sources list", event_name="CLI_SOURCES_LIST", sources=sources_list)
     except Exception as e:
         logger.error(f"Error listing sources: {e}", event_name="CLI_DB_ERROR", exc_info=True)

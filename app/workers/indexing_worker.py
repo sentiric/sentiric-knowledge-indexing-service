@@ -32,7 +32,6 @@ class IndexingManager:
         try:
             logger.info(f"Loading embedding model: {settings.QDRANT_DB_EMBEDDING_MODEL_NAME}", event_name="MODEL_LOADING_START")
             
-            # [ARCH-COMPLIANCE] Bloklayıcı (CPU-bound) init işlemini thread'e aldık.
             self.model = await asyncio.to_thread(
                 SentenceTransformer, settings.QDRANT_DB_EMBEDDING_MODEL_NAME, cache_folder="/app/model-cache"
             )
@@ -60,7 +59,6 @@ class IndexingManager:
                 await asyncio.sleep(delay)
 
     async def _check_qdrant(self):
-        # [ARCH-COMPLIANCE] Senkron client ağ işlemi yapar, event loop'u dondurmamalı
         def _sync_check():
             client = QdrantClient(url=settings.QDRANT_HTTP_URL, api_key=settings.QDRANT_API_KEY, timeout=10)
             client.get_collections()
@@ -150,7 +148,6 @@ class IndexingManager:
                 return
             
             for source in datasources:
-                # [ARCH-COMPLIANCE] SPAN ID YAYILIMI: Her kaynak için ayrı span oluştur
                 span_id = str(uuid.uuid4())
                 structlog.contextvars.bind_contextvars(span_id=span_id, tenant_id=source.tenant_id)
                 await self._process_single_datasource(source)
@@ -203,7 +200,6 @@ class IndexingManager:
             collection_name = f"{settings.QDRANT_DB_COLLECTION_PREFIX}{source.tenant_id}"
             await self.ensure_collection_exists(collection_name)
 
-            # [ARCH-COMPLIANCE] Synchronous Qdrant Delete - Asyncio timeout sarmalayıcısı
             def _sync_delete():
                 self.qdrant_client.delete(
                     collection_name=collection_name,
@@ -217,7 +213,6 @@ class IndexingManager:
 
             points = [models.PointStruct(id=str(uuid.uuid4()), vector=v, payload=all_payloads[i]) for i, v in enumerate(vectors)]
 
-            # [ARCH-COMPLIANCE] Synchronous Qdrant Upsert - Asyncio wrapper
             total_upserted = 0
             for i in range(0, len(points), UPSERT_BATCH_SIZE):
                 batch = points[i : i + UPSERT_BATCH_SIZE]

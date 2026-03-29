@@ -8,24 +8,16 @@ from app.core.config import settings
 _log_setup_done = False
 
 def suts_v4_processor(logger, method_name: str, event_dict: dict) -> dict:
-    """
-    [ARCH-COMPLIANCE] Sentiric Unified Telemetry Standard (SUTS v4.0)
-    structlog event_dict objesini Observer'ın beklediği kesin şemaya dönüştürür.
-    """
-    # Structlog varsayılan olarak insan okunabilir logu 'event' anahtarına atar.
-    # Biz bunu 'message' olarak değiştiriyoruz.
+    # 1. Structlog'un ilk parametresini (message) al
     message = event_dict.pop("event", "")
     
-    # Geliştiricinin event_name="SIP_START" gibi gönderdiği veriyi SUTS event'ine alıyoruz
-    suts_event = event_dict.pop("event_name", "LOG_EVENT")
+    # 2. Hatalı kullanımlara karşı koruma (event_id veya event_name kabul et)
+    suts_event = event_dict.pop("event_name", event_dict.pop("event_id", "LOG_EVENT"))
     
-    # Context'ten gelen Trace ID ve Span ID
     trace_id = event_dict.pop("trace_id", None)
     span_id = event_dict.pop("span_id", None)
     tenant_id = event_dict.pop("tenant_id", settings.TENANT_ID)
 
-    # Kalan her şey SUTS attributes içine gider
-    # Structlog içinden gelen timestamp vs. gibi otomatik eklenen alanları temizle
     event_dict.pop("timestamp", None)
     event_dict.pop("level", None)
 
@@ -43,7 +35,7 @@ def suts_v4_processor(logger, method_name: str, event_dict: dict) -> dict:
         "trace_id": trace_id,
         "span_id": span_id,
         "event": suts_event,
-        "message": message,
+        "message": str(message),
         "attributes": event_dict
     }
 
@@ -54,14 +46,13 @@ def setup_logging():
 
     log_level = settings.LOG_LEVEL.upper()
 
-    # Standart kütüphane loglarını yakalamak ve JSON yapmak
     logging.basicConfig(format="%(message)s", stream=sys.stdout, level=log_level)
 
     processors = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,
         suts_v4_processor,
-        structlog.processors.JSONRenderer() # [ARCH-COMPLIANCE] STDOUT JSON Only
+        structlog.processors.JSONRenderer() 
     ]
 
     structlog.configure(
