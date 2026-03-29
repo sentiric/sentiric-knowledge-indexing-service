@@ -1,18 +1,16 @@
 # app/ingesters/web_ingester.py
 import httpx
 import structlog
-import re
 from bs4 import BeautifulSoup, Comment
 from typing import List
 from .base import BaseIngester
 from app.core.models import Document, DataSource
 
-logger = structlog.get_logger(__name__)
+logger = structlog.get_logger()
 
 class WebIngester(BaseIngester):
-
     async def load(self, source: DataSource) -> List[Document]:
-        logger.info("Web sayfasından veri çekiliyor...", event="WEB_INGEST_START", url=source.source_uri)
+        logger.info(f"Scraping web page: {source.source_uri}", event_name="INGEST_WEB_FETCH")
         try:
             async with httpx.AsyncClient(verify=False) as client:
                 response = await client.get(
@@ -42,11 +40,10 @@ class WebIngester(BaseIngester):
             clean_text = "\n".join(cleaned_lines)
 
             if not clean_text or len(clean_text) < 50:
-                logger.warning("Web sayfası içeriği yetersiz veya boş.", event="WEB_INGEST_EMPTY", url=source.source_uri)
+                logger.warn("Web page content is empty or too short.", event_name="INGEST_WEB_EMPTY", url=source.source_uri)
                 return []
 
-            logger.info("Web sayfası başarıyla çekildi.", event="WEB_INGEST_SUCCESS", url=source.source_uri)
-
+            logger.info("Successfully scraped web page.", event_name="INGEST_WEB_SUCCESS", length=len(clean_text))
             return [
                 Document(
                     page_content=clean_text,
@@ -59,8 +56,8 @@ class WebIngester(BaseIngester):
                 )
             ]
         except httpx.HTTPStatusError as e:
-            logger.error("Web sayfasına erişilemedi.", event="WEB_INGEST_HTTP_ERROR", url=source.source_uri, status_code=e.response.status_code)
+            logger.error(f"HTTP error fetching web page: {e.response.status_code}", event_name="INGEST_WEB_HTTP_ERROR", status_code=e.response.status_code)
             return []
         except Exception as e:
-            logger.error("Web yükleyicide beklenmedik bir hata oluştu.", event="WEB_INGEST_FATAL_ERROR", url=source.source_uri, error=str(e))
+            logger.error(f"Unexpected error in web ingester: {e}", event_name="INGEST_WEB_ERROR", exc_info=True)
             return []

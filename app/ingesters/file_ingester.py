@@ -6,32 +6,30 @@ from typing import List
 from .base import BaseIngester
 from app.core.models import Document, DataSource
 
-logger = structlog.get_logger(__name__)
+logger = structlog.get_logger()
 
 class FileIngester(BaseIngester):
-
     async def load(self, source: DataSource) -> List[Document]:
         file_path = Path(source.source_uri)
         
-        log = logger.bind(path=str(file_path), tenant_id=source.tenant_id)
-        log.info("Yerel dosya kaynağından veri okunuyor...", event="FILE_INGEST_START")
+        logger.info(f"Reading local file: {file_path}", event_name="INGEST_FILE_FETCH")
 
         if not file_path.exists():
-            log.error("Dosya bulunamadı.", event="FILE_NOT_FOUND")
+            logger.error("File not found.", event_name="INGEST_FILE_NOT_FOUND", path=str(file_path))
             return []
 
         if not file_path.is_file():
-            log.error("Belirtilen yol bir dosya değil.", event="FILE_PATH_INVALID")
+            logger.error("Path is not a file.", event_name="INGEST_FILE_INVALID_PATH", path=str(file_path))
             return []
 
         try:
             content = await asyncio.to_thread(self._read_file_safe, file_path)
             
             if not content:
-                log.warning("Dosya boş veya okunamadı.", event="FILE_EMPTY_OR_UNREADABLE")
+                logger.warn("File is empty or unreadable.", event_name="INGEST_FILE_EMPTY", path=str(file_path))
                 return []
 
-            log.info("Dosya başarıyla okundu.", event="FILE_INGEST_SUCCESS", size=len(content))
+            logger.info("Successfully read file.", event_name="INGEST_FILE_SUCCESS", size=len(content))
 
             return [
                 Document(
@@ -46,14 +44,14 @@ class FileIngester(BaseIngester):
                 )
             ]
         except Exception as e:
-            log.error("Dosya işlenirken beklenmedik hata.", event="FILE_INGEST_ERROR", error=str(e))
+            logger.error(f"Unexpected error processing file: {e}", event_name="INGEST_FILE_ERROR", exc_info=True)
             return []
 
     def _read_file_safe(self, path: Path) -> str:
         try:
             return path.read_text(encoding='utf-8')
         except UnicodeDecodeError:
-            logger.warning("UTF-8 decode hatası, latin-1 deneniyor...", event="FILE_DECODE_RETRY", path=str(path))
+            logger.warn("UTF-8 decode failed, trying latin-1...", event_name="INGEST_FILE_ENCODING_RETRY", path=str(path))
             try:
                 return path.read_text(encoding='latin-1')
             except Exception:
