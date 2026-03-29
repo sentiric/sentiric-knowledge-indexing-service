@@ -1,4 +1,5 @@
 # app/core/config.py
+# [ARCH-COMPLIANCE] TENANT_ID zorunlu hale getirildi, SUTS için NODE_NAME eklendi.
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 
@@ -9,13 +10,17 @@ class Settings(BaseSettings):
     ENV: str = "production"
     LOG_LEVEL: str = "INFO"
     SERVICE_VERSION: str = "0.1.0"
+    NODE_NAME: str = "unknown" # SUTS v4.0 resource.host.name için
+    
+    # [ARCH-COMPLIANCE] Strict Tenant Isolation
+    TENANT_ID: str
     
     # Network ve Port Ayarları
     KNOWLEDGE_INDEXING_SERVICE_HTTP_PORT: int = 17030
     KNOWLEDGE_INDEXING_SERVICE_GRPC_PORT: int = 17031
     KNOWLEDGE_INDEXING_SERVICE_METRICS_PORT: int = 17032
     
-    # mTLS Sertifika Yolları (YENİ)
+    # mTLS Sertifika Yolları
     GRPC_TLS_CA_PATH: str
     KNOWLEDGE_INDEXING_SERVICE_CERT_PATH: str
     KNOWLEDGE_INDEXING_SERVICE_KEY_PATH: str

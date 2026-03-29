@@ -1,4 +1,4 @@
-# sentiric-knowledge-indexing-service/app/ingesters/postgres_ingester.py
+# app/ingesters/postgres_ingester.py
 import asyncpg
 import structlog
 from typing import List
@@ -9,14 +9,12 @@ from app.core.models import Document, DataSource
 logger = structlog.get_logger(__name__)
 
 class PostgresIngester(BaseIngester):
-    """PostgreSQL'den RAG için gerekli veriyi çeken yükleyici."""
 
     async def load(self, source: DataSource) -> List[Document]:
         if not settings.POSTGRES_URL:
-            logger.error("PostgreSQL URL'si tanımlı değil. Bu yükleyici çalıştırılamaz.")
+            logger.error("PostgreSQL URL'si tanımlı değil. Bu yükleyici çalıştırılamaz.", event="POSTGRES_URL_MISSING")
             return []
 
-        # source.source_uri formatı: "schema.table(content_column,metadata_column1,metadata_column2)"
         try:
             table_full, columns_str = source.source_uri.split('(')
             columns_str = columns_str.rstrip(')')
@@ -25,10 +23,10 @@ class PostgresIngester(BaseIngester):
             metadata_columns = columns[1:]
             
             query = f'SELECT {", ".join(columns)} FROM {table_full} WHERE tenant_id = $1'
-            logger.info("Veritabanından veri çekiliyor...", query=query, tenant=source.tenant_id)
+            logger.info("Veritabanından veri çekiliyor...", event="POSTGRES_INGEST_START", query=query, tenant=source.tenant_id)
 
         except ValueError:
-            logger.error("Postgres source_uri formatı geçersiz.", uri=source.source_uri)
+            logger.error("Postgres source_uri formatı geçersiz.", event="POSTGRES_URI_INVALID", uri=source.source_uri)
             return []
 
         conn = None
@@ -49,10 +47,10 @@ class PostgresIngester(BaseIngester):
                 
                 documents.append(Document(page_content=str(content), metadata=metadata))
             
-            logger.info(f"{len(documents)} adet doküman veritabanından yüklendi.", table=table_full)
+            logger.info(f"{len(documents)} adet doküman veritabanından yüklendi.", event="POSTGRES_INGEST_SUCCESS", table=table_full)
             return documents
         except Exception as e:
-            logger.error("PostgreSQL'den veri çekilirken hata oluştu.", error=str(e), exc_info=True)
+            logger.error("PostgreSQL'den veri çekilirken hata oluştu.", event="POSTGRES_INGEST_ERROR", error=str(e), exc_info=True)
             return []
         finally:
             if conn:

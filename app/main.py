@@ -1,12 +1,13 @@
-# Dosya: app/main.py
+# app/main.py
+# [ARCH-COMPLIANCE] SUTS v4.0, span_id, trace_id propagation ve event etiketleri eklendi.
 import asyncio
-import uuid  # [ARCH-COMPLIANCE] trace_id için eklendi
+import uuid  
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import grpc
 import structlog
-from fastapi import FastAPI, Response, status, Body, Request # [ARCH-COMPLIANCE] Request eklendi
+from fastapi import FastAPI, Response, status, Body, Request 
 
 from app.core.config import settings
 from app.core.logging import setup_logging
@@ -14,7 +15,6 @@ from app.core.models import ReindexRequest
 from app.core import metrics
 from app.workers.indexing_worker import IndexingManager
 
-# Kontratlardan gRPC stubs'larını import et
 from sentiric.knowledge.v1 import indexing_pb2
 from sentiric.knowledge.v1 import indexing_pb2_grpc
 
@@ -28,35 +28,32 @@ class AppState:
 
 app_state = AppState()
 
-# --- gRPC Servisi Implementasyonu ---
 class KnowledgeIndexingServicer(indexing_pb2_grpc.KnowledgeIndexingServiceServicer):
     async def TriggerReindex(
         self, request: indexing_pb2.TriggerReindexRequest, context: grpc.aio.ServicerContext
     ) -> indexing_pb2.TriggerReindexResponse:
         
-        # [ARCH-COMPLIANCE] gRPC metadata üzerinden trace_id yayılımı sağlandı
         metadata = dict(context.invocation_metadata())
         trace_id = metadata.get("x-trace-id", str(uuid.uuid4()))
-        structlog.contextvars.bind_contextvars(trace_id=trace_id)
+        span_id = metadata.get("x-span-id", str(uuid.uuid4()))
+        structlog.contextvars.bind_contextvars(trace_id=trace_id, span_id=span_id)
 
         if not app_state.is_ready or not app_state.indexing_manager:
+            logger.warning("Worker is not ready.", event="GRPC_REJECTED_NOT_READY")
             await context.abort(grpc.StatusCode.UNAVAILABLE, "Worker is not ready.")
         
         tenant_id = request.tenant_id if request.tenant_id else "all"
-        logger.info("gRPC üzerinden yeniden indeksleme tetiklendi.", requested_tenant=tenant_id)
+        logger.info("gRPC üzerinden yeniden indeksleme tetiklendi.", event="GRPC_REINDEX_TRIGGERED", requested_tenant=tenant_id)
         
-        # Worker'a anında çalışması için sinyal gönder
         app_state.indexing_manager.trigger_event.set()
         
         return indexing_pb2.TriggerReindexResponse(success=True, job_id="triggered")
 
 async def serve_grpc():
-    """gRPC sunucusunu başlatır."""
     server = grpc.aio.server()
     indexing_pb2_grpc.add_KnowledgeIndexingServiceServicer_to_server(KnowledgeIndexingServicer(), server)
     
-    # [ARCH-COMPLIANCE] security.grpc_communication kısıtı gereği güvensiz fallback kaldırıldı. 
-    # Sertifika yoksa servis fail olmalıdır, güvensiz porta geçemez.
+    # [ARCH-COMPLIANCE] mTLS Koruması. Sertifikalar eksikse servis bilinçli olarak çöker (Crash).
     private_key = Path(settings.KNOWLEDGE_INDEXING_SERVICE_KEY_PATH).read_bytes()
     certificate_chain = Path(settings.KNOWLEDGE_INDEXING_SERVICE_CERT_PATH).read_bytes()
     ca_cert = Path(settings.GRPC_TLS_CA_PATH).read_bytes()
@@ -68,7 +65,7 @@ async def serve_grpc():
     )
     listen_addr = f'[::]:{settings.KNOWLEDGE_INDEXING_SERVICE_GRPC_PORT}'
     server.add_secure_port(listen_addr, server_credentials)
-    logger.info("Güvenli (mTLS) gRPC sunucusu başlatılıyor...", address=listen_addr)
+    logger.info("Güvenli (mTLS) gRPC sunucusu başlatılıyor...", event="GRPC_SERVER_START", address=listen_addr)
     
     app_state.grpc_server = server
     await server.start()
@@ -77,15 +74,17 @@ async def serve_grpc():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
+    structlog.contextvars.bind_contextvars(trace_id=str(uuid.uuid4()), span_id=str(uuid.uuid4()))
+    
     metrics.SERVICE_INFO.info({'version': settings.SERVICE_VERSION})
-    logger.info("Knowledge Indexing Service başlatılıyor...", version=settings.SERVICE_VERSION, env=settings.ENV)
+    logger.info("Knowledge Indexing Service başlatılıyor...", event="SERVICE_STARTUP", version=settings.SERVICE_VERSION, env=settings.ENV)
     
     app_state.indexing_manager = IndexingManager(app_state)
     asyncio.create_task(app_state.indexing_manager.start_worker_loop())
     
     yield
     
-    logger.info("Knowledge Indexing Service kapatılıyor.")
+    logger.info("Knowledge Indexing Service kapatılıyor.", event="SERVICE_SHUTDOWN")
     if app_state.grpc_server:
         await app_state.grpc_server.stop(grace=1)
 
@@ -98,13 +97,14 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# [ARCH-COMPLIANCE] HTTP istekleri için Trace-ID Middleware Eklendi
 @app.middleware("http")
 async def trace_id_middleware(request: Request, call_next):
     trace_id = request.headers.get("x-trace-id", str(uuid.uuid4()))
-    structlog.contextvars.bind_contextvars(trace_id=trace_id)
+    span_id = request.headers.get("x-span-id", str(uuid.uuid4()))
+    structlog.contextvars.bind_contextvars(trace_id=trace_id, span_id=span_id)
     response = await call_next(request)
     response.headers["X-Trace-Id"] = trace_id
+    response.headers["X-Span-Id"] = span_id
     return response
 
 @app.get("/health", status_code=status.HTTP_200_OK, tags=["Monitoring"])
@@ -117,10 +117,11 @@ async def health_check():
 @app.post("/reindex", status_code=status.HTTP_202_ACCEPTED, tags=["Actions"])
 async def trigger_reindex(request: ReindexRequest = Body(None)):
     if not app_state.is_ready or not app_state.indexing_manager:
+        logger.warning("HTTP Reject: Worker is not ready.", event="HTTP_REJECTED_NOT_READY")
         return Response(content='{"detail": "Worker is not ready."}', status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
     
     tenant_id = request.tenant_id if request else "all"
-    logger.info("HTTP üzerinden yeniden indeksleme tetiklendi.", requested_tenant=tenant_id)
+    logger.info("HTTP üzerinden yeniden indeksleme tetiklendi.", event="HTTP_REINDEX_TRIGGERED", requested_tenant=tenant_id)
     
     app_state.indexing_manager.trigger_event.set()
     

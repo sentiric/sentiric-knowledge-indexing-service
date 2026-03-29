@@ -1,4 +1,4 @@
-# sentiric-knowledge-indexing-service/app/ingesters/web_ingester.py
+# app/ingesters/web_ingester.py
 import httpx
 import structlog
 import re
@@ -10,12 +10,11 @@ from app.core.models import Document, DataSource
 logger = structlog.get_logger(__name__)
 
 class WebIngester(BaseIngester):
-    """Web sitelerinden metin içeriği çeken optimize edilmiş yükleyici."""
 
     async def load(self, source: DataSource) -> List[Document]:
-        logger.info("Web sayfasından veri çekiliyor...", url=source.source_uri)
+        logger.info("Web sayfasından veri çekiliyor...", event="WEB_INGEST_START", url=source.source_uri)
         try:
-            async with httpx.AsyncClient(verify=False) as client: # SSL hatalarını yoksay (internal siteler için)
+            async with httpx.AsyncClient(verify=False) as client:
                 response = await client.get(
                     source.source_uri, 
                     follow_redirects=True, 
@@ -26,19 +25,14 @@ class WebIngester(BaseIngester):
 
             soup = BeautifulSoup(response.text, "html.parser")
             
-            # 1. Gereksiz etiketleri temizle (Gürültü azaltma)
             for element in soup(["script", "style", "nav", "footer", "header", "aside", "iframe", "noscript", "svg", "meta", "link"]):
                 element.decompose()
 
-            # 2. Yorum satırlarını temizle
             for comment in soup.find_all(string=lambda text: isinstance(text, Comment)):
                 comment.extract()
 
-            # 3. Metni çıkar
             text = soup.get_text(separator="\n")
             
-            # 4. Boşluk ve satır temizliği (Regex ile)
-            # Çoklu yeni satırları tekil yeni satıra indir, satır başı/sonu boşluklarını sil
             cleaned_lines = []
             for line in text.splitlines():
                 stripped = line.strip()
@@ -47,9 +41,11 @@ class WebIngester(BaseIngester):
             
             clean_text = "\n".join(cleaned_lines)
 
-            if not clean_text or len(clean_text) < 50: # Çok kısa içerikleri yoksay
-                logger.warning("Web sayfası içeriği yetersiz veya boş.", url=source.source_uri)
+            if not clean_text or len(clean_text) < 50:
+                logger.warning("Web sayfası içeriği yetersiz veya boş.", event="WEB_INGEST_EMPTY", url=source.source_uri)
                 return []
+
+            logger.info("Web sayfası başarıyla çekildi.", event="WEB_INGEST_SUCCESS", url=source.source_uri)
 
             return [
                 Document(
@@ -63,8 +59,8 @@ class WebIngester(BaseIngester):
                 )
             ]
         except httpx.HTTPStatusError as e:
-            logger.error("Web sayfasına erişilemedi.", url=source.source_uri, status_code=e.response.status_code)
+            logger.error("Web sayfasına erişilemedi.", event="WEB_INGEST_HTTP_ERROR", url=source.source_uri, status_code=e.response.status_code)
             return []
         except Exception as e:
-            logger.error("Web yükleyicide beklenmedik bir hata oluştu.", url=source.source_uri, error=str(e))
+            logger.error("Web yükleyicide beklenmedik bir hata oluştu.", event="WEB_INGEST_FATAL_ERROR", url=source.source_uri, error=str(e))
             return []
