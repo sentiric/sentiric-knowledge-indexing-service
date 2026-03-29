@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "sentiric-knowledge-indexing-service"
-version = "0.2.0"
+version = "0.2.1"
 description = "RAG Indexing Service for ingesting data into vector DB."
 authors = ["Sentiric Team"]
 license = "Apache-2.0"
