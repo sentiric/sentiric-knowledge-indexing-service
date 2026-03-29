@@ -84,7 +84,8 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    logger.info("Knowledge Indexing Service kapatılıyor.", event="SERVICE_SHUTDOWN")
+    # [ARCH-COMPLIANCE] Event SNAKE_CASE, metin message içinde.
+    logger.info("Knowledge Indexing Service is shutting down.", event="SERVICE_SHUTDOWN_INIT")
     if app_state.grpc_server:
         await app_state.grpc_server.stop(grace=1)
 
