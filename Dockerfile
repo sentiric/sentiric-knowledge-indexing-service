@@ -1,15 +1,11 @@
-### 📄 File: Dockerfile
-# Bu Dockerfile, hem CPU hem de GPU imajlarını dinamik ve uyumlu bir şekilde oluşturur.
+### 📄 File: Dockerfile (Her iki servis için geçerlidir)
 
-# --- Build Argümanları ---
 ARG TARGET_DEVICE=cpu
 ARG PYTHON_VERSION=3.11
 
-# --- Temel İmajları Tanımlama ---
 FROM python:${PYTHON_VERSION}-slim-bullseye AS cpu-base
 FROM pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime AS gpu-base
 
-# --- Hedef İmajı Seçme ---
 FROM ${TARGET_DEVICE}-base AS base
 
 # ==================================
@@ -31,17 +27,29 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 COPY requirements.txt .
 
-# --- Bağımlılık Kurulumu ---
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip && \
+RUN pip install --upgrade pip && \
     if [ "$TARGET_DEVICE" = "gpu" ]; then \
         echo "GPU imajı: PyTorch zaten mevcut, diğer bağımlılıklar kuruluyor."; \
         grep -v 'torch' requirements.txt > requirements.tmp.txt; \
         pip install --no-cache-dir -r requirements.tmp.txt; \
     else \
         echo "CPU imajı: Hafif PyTorch ve diğer bağımlılıklar kuruluyor."; \
-        pip install --no-cache-dir -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu; \
+        pip install --no-cache-dir -r requirements.txt; \
     fi
+
+WORKDIR /tmp/contracts
+RUN git clone -b v1.9.0 https://github.com/sentiric/sentiric-contracts.git .
+
+RUN echo "Proto dosyaları yeniden derleniyor..." && \
+    find proto -name "*.proto" > protos.txt && \
+    while read p; do \
+        echo "Compiling $p"; \
+        python -m grpc_tools.protoc -Iproto --python_out=. --grpc_python_out=. "$p"; \
+    done < protos.txt
+
+RUN pip install --no-cache-dir .
+
+WORKDIR /app
 
 # ==================================
 #      Aşama 2: Final Image
@@ -53,12 +61,16 @@ WORKDIR /app
 ARG GIT_COMMIT="unknown"
 ARG BUILD_DATE="unknown"
 ARG SERVICE_VERSION="0.0.0"
+
+# [ARCH-COMPLIANCE] HF_HUB_DISABLE_PROGRESS_BARS eklendi! JSON logları parçalamaması için şarttır.
 ENV GIT_COMMIT=${GIT_COMMIT} \
     BUILD_DATE=${BUILD_DATE} \
     SERVICE_VERSION=${SERVICE_VERSION} \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
-    HF_HOME="/app/model-cache"
+    HF_HOME="/app/model-cache" \
+    HF_HUB_DISABLE_PROGRESS_BARS=1 \
+    TOKENIZERS_PARALLELISM=false
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     netcat-openbsd \
@@ -74,7 +86,7 @@ RUN addgroup --system --gid 1001 appgroup && \
 COPY --from=builder --chown=appuser:appgroup /opt/venv /opt/venv
 COPY --chown=appuser:appgroup app ./app
 
-# --- YENİ EKLENDİ: CLI Aracını Kopyala ---
+# Indexing service için manage.py kopyalama satırı
 COPY --chown=appuser:appgroup manage.py .
 
 RUN mkdir -p /app/model-cache && \
@@ -82,7 +94,7 @@ RUN mkdir -p /app/model-cache && \
 
 USER appuser
 
-# knowledge-indexing-service için:
+# Indexing: 17030 17031 17032
 EXPOSE 17030 17031 17032
 
 CMD ["python", "-m", "app.runner"]
