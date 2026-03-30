@@ -18,17 +18,23 @@ class InterceptHandler(logging.Handler):
     """Standart Python loglarını Structlog JSON yapısına çevirir (Anti-RAW)"""
     def emit(self, record):
         try:
-            level = logger.level_to_name(record.levelno)
+            level_name = logging.getLevelName(record.levelno).lower()
+            if level_name == "warning":
+                level_name = "warn"
+            elif level_name == "critical":
+                level_name = "fatal"
         except Exception:
-            level = record.levelname
+            level_name = "info"
 
-        # Uvicorn ve httpx loglarında traceback varsa al
         kwargs = {}
         if record.exc_info:
             kwargs["exc_info"] = record.exc_info
 
-        structlog.get_logger(record.name).log(
-            level,
+        # [ARCH-COMPLIANCE] stdlib proxy hatasını (KeyError) önlemek için doğrudan method reflection kullanıldı
+        logger = structlog.get_logger(record.name)
+        log_method = getattr(logger, level_name, logger.info)
+        
+        log_method(
             record.getMessage(),
             event_name="THIRD_PARTY_LOG",
             logger_name=record.name,
@@ -101,15 +107,16 @@ def setup_logging():
 
     shared_processors = [
         structlog.contextvars.merge_contextvars,
-        structlog.stdlib.add_log_level,
+        structlog.processors.add_log_level,
         suts_v4_processor,
         structlog.processors.JSONRenderer() 
     ]
 
+    # [ARCH-COMPLIANCE] structlog -> stdlib -> InterceptHandler -> structlog sonsuz döngüsünü (Infinite Loop) 
+    # engellemek için stdout'a direkt yazan 'WriteLoggerFactory' ile izole edilmiştir.
     structlog.configure(
         processors=shared_processors,
-        logger_factory=structlog.stdlib.LoggerFactory(),
-        wrapper_class=structlog.stdlib.BoundLogger,
+        logger_factory=structlog.WriteLoggerFactory(file=sys.stdout),
         cache_logger_on_first_use=True,
     )
     
