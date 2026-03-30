@@ -29,6 +29,8 @@ class IndexingManager:
         self._is_running = False
 
     async def initialize(self):
+        # [ARCH-COMPLIANCE] Initialization Trace Context
+        structlog.contextvars.bind_contextvars(trace_id=str(uuid.uuid4()), span_id=str(uuid.uuid4()))
         try:
             logger.info(f"Loading embedding model: {settings.QDRANT_DB_EMBEDDING_MODEL_NAME}", event_name="MODEL_LOADING_START")
             
@@ -45,6 +47,8 @@ class IndexingManager:
             logger.fatal(f"Critical infrastructure failed to start. {e}", event_name="INFRASTRUCTURE_FAILURE", exc_info=True)
             self.app_state.is_ready = False
             raise
+        finally:
+            structlog.contextvars.clear_contextvars()
 
     async def _wait_for_service(self, service_name: str, check_function, retries=10, delay=5):
         for i in range(retries):
@@ -130,12 +134,13 @@ class IndexingManager:
 
     @metrics.INDEXING_CYCLE_DURATION_SECONDS.time()
     async def run_indexing_cycle(self, tenant_id: str = None):
-        ctx = structlog.contextvars.get_contextvars()
-        if "trace_id" not in ctx:
-            structlog.contextvars.bind_contextvars(trace_id=str(uuid.uuid4()))
+        # [ARCH-COMPLIANCE] Ensure Cycle Context
+        cycle_trace_id = str(uuid.uuid4())
+        structlog.contextvars.bind_contextvars(trace_id=cycle_trace_id, span_id=str(uuid.uuid4()))
 
         if self._is_running:
             logger.warn("Indexing cycle already running. Skip.", event_name="INDEXING_SKIPPED")
+            structlog.contextvars.clear_contextvars()
             return
         
         self._is_running = True
@@ -148,8 +153,8 @@ class IndexingManager:
                 return
             
             for source in datasources:
-                span_id = str(uuid.uuid4())
-                structlog.contextvars.bind_contextvars(span_id=span_id, tenant_id=source.tenant_id)
+                # [ARCH-COMPLIANCE] Strict span isolation per document source
+                structlog.contextvars.bind_contextvars(span_id=str(uuid.uuid4()), tenant_id=source.tenant_id)
                 await self._process_single_datasource(source)
                 
             metrics.LAST_INDEXING_TIMESTAMP.set_to_current_time()
@@ -158,7 +163,7 @@ class IndexingManager:
         except Exception as e:
             logger.error(f"Fatal error during indexing cycle: {e}", event_name="INDEXING_CYCLE_ERROR", exc_info=True)
         finally:
-            structlog.contextvars.unbind_contextvars("span_id", "tenant_id")
+            structlog.contextvars.clear_contextvars()
             self._is_running = False
 
     async def _process_single_datasource(self, source: DataSource):
@@ -273,5 +278,7 @@ class IndexingManager:
             except asyncio.TimeoutError:
                 await self.run_indexing_cycle()
             except Exception as e:
+                structlog.contextvars.bind_contextvars(trace_id=str(uuid.uuid4()), span_id=str(uuid.uuid4()))
                 logger.error(f"Error in worker main loop: {e}", event_name="WORKER_LOOP_ERROR", exc_info=True)
+                structlog.contextvars.clear_contextvars()
                 await asyncio.sleep(60)
