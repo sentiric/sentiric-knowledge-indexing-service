@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     
     ENV: str = "production"
     LOG_LEVEL: str = "INFO"
-    SERVICE_VERSION: str = "0.4.1" # [ARCH-COMPLIANCE] Versiyon pyproject.toml ile eşitlendi
+    SERVICE_VERSION: str = "0.4.4" # [ARCH-COMPLIANCE] Versiyon pyproject.toml ile eşitlendi
     
     NODE_NAME: str = os.getenv("NODE_HOSTNAME", "unknown-node")
     TENANT_ID: str = os.getenv("TENANT_ID", "")
