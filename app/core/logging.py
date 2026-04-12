@@ -14,8 +14,10 @@ _log_setup_done = False
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+
 class InterceptHandler(logging.Handler):
     """Standart Python loglarını Structlog JSON yapısına çevirir (Anti-RAW)"""
+
     def emit(self, record):
         try:
             level_name = logging.getLevelName(record.levelno).lower()
@@ -33,18 +35,19 @@ class InterceptHandler(logging.Handler):
         # [ARCH-COMPLIANCE] stdlib proxy hatasını (KeyError) önlemek için doğrudan method reflection kullanıldı
         logger = structlog.get_logger(record.name)
         log_method = getattr(logger, level_name, logger.info)
-        
+
         log_method(
             record.getMessage(),
             event_name="THIRD_PARTY_LOG",
             logger_name=record.name,
-            **kwargs
+            **kwargs,
         )
+
 
 def suts_v4_processor(logger, method_name: str, event_dict: dict) -> dict:
     message = event_dict.pop("event", "")
     suts_event = event_dict.pop("event_name", event_dict.pop("event_id", "LOG_EVENT"))
-    
+
     trace_id = event_dict.pop("trace_id", None)
     span_id = event_dict.pop("span_id", None)
     tenant_id = event_dict.pop("tenant_id", settings.TENANT_ID)
@@ -65,17 +68,20 @@ def suts_v4_processor(logger, method_name: str, event_dict: dict) -> dict:
         "severity": method_name.upper() if method_name else "INFO",
         "tenant_id": tenant_id,
         "resource": {
-            "service.name": settings.PROJECT_NAME.lower().replace(" ", "-").replace("sentiric-", ""),
+            "service.name": settings.PROJECT_NAME.lower()
+            .replace(" ", "-")
+            .replace("sentiric-", ""),
             "service.version": settings.SERVICE_VERSION,
             "service.env": settings.ENV,
-            "host.name": settings.NODE_NAME
+            "host.name": settings.NODE_NAME,
         },
         "trace_id": trace_id,
         "span_id": span_id,
         "event": suts_event,
         "message": str(message),
-        "attributes": event_dict
+        "attributes": event_dict,
     }
+
 
 def setup_logging():
     global _log_setup_done
@@ -89,18 +95,30 @@ def setup_logging():
     logging.captureWarnings(True)
 
     # 2. Uvicorn, FastAPI ve gRPC loglarını hijack et
+    # [ARCH-COMPLIANCE FIX] Ambiguous variable name 'l' değiştirildi. (Satır 105 civarı)
     intercept_loggers = [
-        "uvicorn", "uvicorn.access", "uvicorn.error", "fastapi", "grpc", "_cygrpc"
+        "uvicorn",
+        "uvicorn.access",
+        "uvicorn.error",
+        "fastapi",
+        "grpc",
+        "_cygrpc",
     ]
     for logger_name in intercept_loggers:
-        l = logging.getLogger(logger_name)
-        l.handlers = [InterceptHandler()]
-        l.propagate = False
+        target_logger = logging.getLogger(logger_name)
+        target_logger.handlers = [InterceptHandler()]
+        target_logger.propagate = False
 
     # 3. Gürültücü Kütüphaneleri Susturma
     noisy_loggers = [
-        "httpx", "httpcore", "urllib3", "qdrant_client", 
-        "huggingface_hub", "sentence_transformers", "transformers", "py.warnings"
+        "httpx",
+        "httpcore",
+        "urllib3",
+        "qdrant_client",
+        "huggingface_hub",
+        "sentence_transformers",
+        "transformers",
+        "py.warnings",
     ]
     for n in noisy_loggers:
         logging.getLogger(n).setLevel(logging.ERROR)
@@ -109,17 +127,20 @@ def setup_logging():
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         suts_v4_processor,
-        structlog.processors.JSONRenderer() 
+        structlog.processors.JSONRenderer(),
     ]
 
-    # [ARCH-COMPLIANCE] structlog -> stdlib -> InterceptHandler -> structlog sonsuz döngüsünü (Infinite Loop) 
+    # [ARCH-COMPLIANCE] structlog -> stdlib -> InterceptHandler -> structlog sonsuz döngüsünü (Infinite Loop)
     # engellemek için stdout'a direkt yazan 'WriteLoggerFactory' ile izole edilmiştir.
     structlog.configure(
         processors=shared_processors,
         logger_factory=structlog.WriteLoggerFactory(file=sys.stdout),
         cache_logger_on_first_use=True,
     )
-    
+
     _log_setup_done = True
     logger = structlog.get_logger()
-    logger.info("Structured logging configured to SUTS v4.0 with Anti-Noise Engine", event_name="SYSTEM_LOGGING_INIT")
+    logger.info(
+        "Structured logging configured to SUTS v4.0 with Anti-Noise Engine",
+        event_name="SYSTEM_LOGGING_INIT",
+    )

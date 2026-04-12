@@ -4,6 +4,7 @@ from .web_ingester import WebIngester
 from .file_ingester import FileIngester  # EKLENDİ
 from app.core.models import DataSource
 
+
 def ingester_factory(source: DataSource) -> BaseIngester:
     """
     Veri kaynağı türüne göre uygun yükleyici (ingester) nesnesini döndürür.

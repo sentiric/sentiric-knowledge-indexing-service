@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 from typing import List
 from app.core.models import Document, DataSource
 
+
 class BaseIngester(ABC):
     """Tüm veri yükleyiciler için soyut temel sınıf."""
 
